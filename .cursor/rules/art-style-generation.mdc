@@ -1,0 +1,30 @@
+---
+description: Style artistique obligatoire pour toute génération d'images du jeu
+alwaysApply: true
+---
+
+# Style visuel Greenhouse Idle (génération d'images)
+
+Quand l'utilisateur demande de générer / régénérer des assets (cultures, icônes, UI, portraits, etc.), **toujours** utiliser ce style — sauf demande explicite contraire.
+
+## Style
+
+- **Référence qualité** : `assets/textures/ui/auto_planter.png`, `auto_harvester.png`, icônes légumes
+- **2D casual farm idle** premium : cell-shading, matériaux bois/métal, highlights
+- **Contours sombre épais** et nets
+- Détails travaillés (rivets, grain bois, reflets) — **pas** d’icônes géométriques minimalistes / PIL basiques
+- Lisibles à petite taille ; fond **transparent**
+- Pas de réalisme photo, pas de neon / violet rush
+
+## Culturas / stages de pousse
+
+- Même langage graphique que les légumes existants (`assets/textures/crops/`, icônes)
+- Progression cohérente entre stages (pas de saut hors-sol ↔ en terre)
+- Carottes : toujours **plusieurs plants** (3) et **plantées** (pas arrachées)
+- Ancrage bas du sujet = pieds / ligne de sol imaginaire
+
+## À éviter
+
+- Purple glow, neon, 3D render, photo, watercolor
+- Trop de détails fins qui disparaissent en 40–80 px
+- Cartes / pastilles / badges flottants sur le sujet

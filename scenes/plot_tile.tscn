@@ -1,0 +1,72 @@
+[gd_scene load_steps=2 format=3 uid="uid://plot_tile_iso"]
+
+[ext_resource type="Script" path="res://scripts/plot_tile.gd" id="1_plot"]
+
+[node name="PlotTile" type="Control"]
+custom_minimum_size = Vector2(104, 182)
+mouse_filter = 0
+script = ExtResource("1_plot")
+
+[node name="Status" type="Label" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_left = 4.0
+offset_top = 0.0
+offset_right = 100.0
+offset_bottom = 22.0
+mouse_filter = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0.75)
+theme_override_constants/outline_size = 3
+theme_override_font_sizes/font_size = 12
+horizontal_alignment = 1
+text = ""
+
+[node name="HoverHint" type="HBoxContainer" parent="."]
+unique_name_in_owner = true
+visible = false
+z_index = 20
+layout_mode = 0
+offset_left = 28.0
+offset_top = 22.0
+offset_right = 76.0
+offset_bottom = 48.0
+mouse_filter = 2
+theme_override_constants/separation = 4
+alignment = 1
+
+[node name="HoverIcon" type="TextureRect" parent="HoverHint"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(24, 24)
+layout_mode = 2
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+texture_filter = 0
+
+[node name="HoverLabel" type="Label" parent="HoverHint"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_colors/font_outline_color = Color(0, 0, 0, 0)
+theme_override_constants/outline_size = 0
+theme_override_font_sizes/font_size = 11
+text = ""
+
+[node name="Soil" type="TextureRect" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_right = 104.0
+offset_bottom = 182.0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 1
+texture_filter = 1
+
+[node name="Crop" type="TextureRect" parent="."]
+unique_name_in_owner = true
+layout_mode = 0
+offset_right = 104.0
+offset_bottom = 182.0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+texture_filter = 0

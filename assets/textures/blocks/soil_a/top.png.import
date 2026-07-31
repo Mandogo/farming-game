@@ -1,0 +1,14 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://c0knb0mvjweh3"
+path="res://.godot/imported/top.png-58374339bb1021e21fe55732fd06609d.image"
+
+[deps]
+
+source_file="res://assets/textures/blocks/soil_a/top.png"
+dest_files=["res://.godot/imported/top.png-58374339bb1021e21fe55732fd06609d.image"]
+
+[params]
+

@@ -1,0 +1,8 @@
+res://scripts/main.gd
+res://scripts/plot_tile.gd
+res://scripts/autoloads/game_state.gd
+res://scripts/ui/missions_panel.gd
+res://scripts/ui/prestige_confirm.gd
+res://scripts/ui/sell_modal.gd
+res://scripts/ui_theme_factory.gd
+res://scripts/ui/debug_cheat_panel.gd

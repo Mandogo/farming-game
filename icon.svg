@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3d8b5f"/>
+      <stop offset="100%" stop-color="#1e4d34"/>
+    </linearGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#d8f5ef"/>
+      <stop offset="100%" stop-color="#7eb8ae"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <circle cx="64" cy="64" r="52" fill="#2d6a4f"/>
+  <circle cx="64" cy="64" r="46" fill="#40916c"/>
+  <!-- serre -->
+  <polygon points="32,72 64,28 96,72" fill="url(#glass)" stroke="#2d5a52" stroke-width="3"/>
+  <rect x="36" y="72" width="56" height="28" fill="#8fc4b8" stroke="#2d5a52" stroke-width="3"/>
+  <line x1="64" y1="28" x2="64" y2="100" stroke="#3d6e66" stroke-width="3"/>
+  <line x1="50" y1="72" x2="50" y2="100" stroke="#4a7a72" stroke-width="2"/>
+  <line x1="78" y1="72" x2="78" y2="100" stroke="#4a7a72" stroke-width="2"/>
+  <line x1="40" y1="55" x2="52" y2="45" stroke="#ffffff" stroke-width="3" stroke-opacity="0.55"/>
+  <!-- pousse -->
+  <line x1="64" y1="96" x2="64" y2="58" stroke="#2d6a4f" stroke-width="5" stroke-linecap="round"/>
+  <ellipse cx="54" cy="56" rx="10" ry="12" fill="#74c69d"/>
+  <ellipse cx="74" cy="52" rx="12" ry="14" fill="#95d5b2"/>
+  <!-- terre -->
+  <ellipse cx="64" cy="100" rx="26" ry="8" fill="#7f5539"/>
+  <!-- soleil -->
+  <circle cx="98" cy="30" r="12" fill="#ffd166"/>
+  <circle cx="98" cy="30" r="7" fill="#fff3b0"/>
+</svg>
