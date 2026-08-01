@@ -78,3 +78,19 @@ Planteur et récolteuse **ne sont pas deux machines séparées** : une seule uni
 - `harvest_all_ready()` défini mais non branché.
 - `machine_oil_power_mult()` stub (+10 %/niv) prévu pour rayon / efficacité machines.
 - Ancien `has_sprinkler` : migration save qui ignore les cases sprinkler.
+
+---
+
+## Candidats futurs (non validés)
+
+Après les 3 piliers (ferti → jardinier → livreur). À trancher avant implémentation.
+
+| Idée | Rôle | Note design |
+|------|------|-------------|
+| **Composteur / silo** | Convertit surplus stock → engrais ou or lent | Sink anti-overflow, pas sur les plots |
+| **Phare à clients** | Accélère refresh commandes / +1 slot temporaire | Synergie branche Orders |
+| **Horloge de serre** | Offline progress borné (X min de ticks) | Vrai idle ; cher / prestige haut |
+| **Tri des commandes** | Priorise / refuse auto selon règles simples | Mini-cerveau avant livreur full |
+| **Amplificateur de combo** | Prolonge ou charge la frénésie passivement | Risque de casser le skill expression |
+| **Irrigation croisée** | Lie 2 fertiliseurs (bonus si zones adjacentes) | Mid-game puzzle placement |
+| **Atelier d’entretien** | Réduit coût upgrade machines / +1 niv max | Meta snowball boutique machines |
