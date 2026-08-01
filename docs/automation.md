@@ -1,96 +1,95 @@
 # Automatisation — décisions design
 
-Spec validée (conversation cloud, 2026-08). À suivre pour l’implémentation et les prochains prompts.
+## Pivot fun (2026-08)
 
-## État actuel
+**Critique** : « range++ / multi-achat / AFK » enlève des clics mais n’ajoute pas de fun.
+
+**Nouveau principe** : une automatisation doit créer un **verbe**, un **timing**, ou un **build** — pas seulement supprimer une action.
+
+| Anti-pattern | Pattern fun |
+|--------------|-------------|
+| Passif invisible | Pulse / charge / fenêtre que tu déclenches |
+| Même effet × N robots | Spécialistes avec tradeoffs |
+| Remplace le joueur | Amplifie un pic (combo, rush, monoculture) |
+| Upgrade plat (range, %) | Choix de style de serre |
+
+Les choix spatiaux ci-dessous restent une base UI ; le **comportement** doit être revalidé avant code.
+
+---
+
+## État code actuel
 
 - Teasers boutique P1 / P3 / P6 / P10 (non achetable).
 - Assets UI : `fertilizer`, `auto_planter`, `auto_harvester`, `auto_delivery`.
-- Champs préparatoires : `auto_plant_id` sur plot ; relique `machine_oil` (coût boutique active, puissance machines = stub).
+- Champs préparatoires : `auto_plant_id` sur plot ; relique `machine_oil` (coût boutique active, puissance = stub).
 - Gameplay placement / effets : **pas encore**.
 
-## Principes communs
+---
 
-- Machines **achetables en plusieurs exemplaires** en boutique (prix cher, courbe exponentielle).
-- **Portée** part de **1** (voisinage Chebyshev : range 1 ≈ 3×3 centré sur l’ancre), augmente via upgrades (niveau machine + / ou nœuds arbre de compétences).
-- Zones qui se chevauchent = OK.
-- **1 machine du même type par parcelle-ancre**.
+## Base spatiale (gardée, UI)
+
+Toujours utile même avec le pivot fun :
+
+- **Fertiliseur** : robot **aérien**, ancré sur une parcelle, **n’occupe pas** la case cultivable.
+- **Jardinier** (= planteur + récolte fusionnés) : **occupe un plot** ; sprite **au sol** (pas superposé au ferti).
+- Replante = **dernier légume de la case** (`auto_plant_id`), pas de panneau graine.
+- Portée de départ 1 ; 1 machine du même type par ancre.
+- Livreur = autre système (commandes), plus tard.
 
 ---
 
-## 1. Fertiliseur (robot aérien)
+## Direction fun proposée (à valider)
 
-| | |
-|---|---|
-| **Rôle** | Accélère la pousse dans sa zone (passif). |
-| **Débloc** | Tôt (teaser actuel P1). |
-| **Placement** | Ancré sur une parcelle ; sprite **au-dessus du centre** (bras / drone suspendu). |
-| **Portée** | Départ range 1, upgradeable. |
-| **Quantité** | Plusieurs en boutique, chers. |
-| **Upgrades** | Puissance (% vitesse) via niveau machine ; portée via arbre / upgrades. |
+### 1. Fertiliseur → « Pulse nutritif »
 
-Ne **occupe pas** une case cultivable (surplombe seulement).
+- Charge lente en fond (ou via tes clics de pousse dans la zone).
+- **Clic sur le robot** = onde de croissance dans la portée (cooldown).
+- Pendant **Frénésie combo** : pulse gratuit / plus fort → tu sync ferti + livraisons.
+- Fun = timing + juice, pas un +% invisible.
 
----
+### 2. Jardinier → « Contremaître de culture »
 
-## 2. Jardinier (plante + récolte fusionnés)
+- Occupe un plot, range 1+.
+- **Bonus fort en monoculture** dans sa zone (même légume) ; zone mixte = lent / malus léger.
+- Travaille par **tournée** : enchaîne récolte→replante, puis petite pause (ou besoin d’un tap « go » hors frénésie).
+- En frénésie : tournées accélérées (spectacle).
+- Fun = tu shapes ta serre pour lui ; ce n’est pas un dumb autofarm.
 
-Planteur et récolteuse **ne sont pas deux machines séparées** : une seule unité « Jardinier ».
+### 3. Livreur → « Client favori » (pas full-AFK)
 
-| | |
-|---|---|
-| **Rôle** | Sur les cases **PRÊTES** dans sa zone : récolte → stock, puis **replante**. |
-| **Débloc** | Plus tard / plus cher que le fertiliseur (ex. ex-P3). |
-| **Placement** | **Occupe un plot de terre** (contrepartie : une case en moins cultivable). Sprite **au sol** (bot roues / chenilles), pas superposé au fertiliseur aérien. |
-| **Portée** | Même principe que le fertiliseur : départ range 1, upgradeable. |
-| **Quantité** | Plusieurs en boutique, encore plus chers. |
-| **UI** | Ferti = air/centre ; jardinier = sol/plot occupé → silhouettes distinctes. Portée en fantôme (couleurs différentes). |
+- Tu **épingles** 1 type de commande / client : il ne livre que ça, très bien.
+- Full auto toutes commandes = trop fort / trop fade ; garder le juggling pour le joueur.
+- Fun = build autour d’une demande, pas « gagne sans regarder ».
 
-### Replante
+### 4. Pic partagé : Rush serre
 
-- Replante le **dernier légume présent sur cette case** (`auto_plant_id` local au plot).
-- Mis à jour à chaque plantation (manuelle ou auto).
-- **Pas** de panneau de config de graine au placement.
-- Pour changer de culture : planter une fois à la main sur la case.
-- Si `auto_plant_id` vide : récolte seulement (ou ignore jusqu’à une première plantation).
+- Bouton / événement : beaucoup de commandes + machines en surrégime, timer court.
+- Les autos deviennent **jouissives** parce qu’elles explosent dans une fenêtre, pas 24/7.
 
 ---
 
-## 3. Livreur auto (plus tard)
+## Idées à fort potentiel fun (non validées)
 
-- Hors scope immédiat.
-- Automatise les **commandes clients** (autre système que les plots).
-- Teaser boutique actuel P10.
+| Idée | Verbe joueur | Pourquoi c’est plus fun |
+|------|--------------|-------------------------|
+| **Station de prep** | Compose 2–3 légumes → « plat » qui match une commande difficile | Mini craft, sink stock, décisions |
+| **Abeille / pollinisateur** | Guide ou attire une unité qui lie 2 parcelles | Émergent, lisible, mignon |
+| **Climats de serre** | Bascule tropique / tempéré / sec (buffs cultures) | Build identity, pas un robot de plus |
+| **Contre-ordre / rush clients** | Déclenche une vague de commandes | Overload contrôlé, pic de stress/fun |
+| **Mentor robot** | XP / or sur les actions que **tu** fais dans sa zone | Amplifie le skill expressif, ne le remplace pas |
+
+À éviter tant que le fun n’est pas prouvé : multi-achat exponentiel de clones passifs, upgrades « +1 range » comme seul levier, amplificateur de combo 100 % passif.
 
 ---
 
-## Découpage produit
+## Découpage produit (provisoire)
 
-| Machine | Job | Priorité |
-|--------|-----|----------|
-| Fertiliseur | *plus vite* | 1 — première à implémenter |
-| Jardinier | *sans clic sur les parcelles* | 2 |
-| Livreur | *sans clic sur les commandes* | 3 |
+1. Valider le pivot (pulse / monoculture / client favori / rush) ou une variante.
+2. Prototyper **une** machine fun (ferti-pulse ou jardinier-monoculture) avant d’élargir la boutique.
+3. Livreur / autres candidatures ensuite.
 
-## Notes techniques existantes
+## Notes techniques
 
-- `GameState` plots : `auto_plant_id` déjà écrit à la plantation / save.
+- `auto_plant_id` déjà écrit à la plantation / save.
 - `harvest_all_ready()` défini mais non branché.
-- `machine_oil_power_mult()` stub (+10 %/niv) prévu pour rayon / efficacité machines.
-- Ancien `has_sprinkler` : migration save qui ignore les cases sprinkler.
-
----
-
-## Candidats futurs (non validés)
-
-Après les 3 piliers (ferti → jardinier → livreur). À trancher avant implémentation.
-
-| Idée | Rôle | Note design |
-|------|------|-------------|
-| **Composteur / silo** | Convertit surplus stock → engrais ou or lent | Sink anti-overflow, pas sur les plots |
-| **Phare à clients** | Accélère refresh commandes / +1 slot temporaire | Synergie branche Orders |
-| **Horloge de serre** | Offline progress borné (X min de ticks) | Vrai idle ; cher / prestige haut |
-| **Tri des commandes** | Priorise / refuse auto selon règles simples | Mini-cerveau avant livreur full |
-| **Amplificateur de combo** | Prolonge ou charge la frénésie passivement | Risque de casser le skill expression |
-| **Irrigation croisée** | Lie 2 fertiliseurs (bonus si zones adjacentes) | Mid-game puzzle placement |
-| **Atelier d’entretien** | Réduit coût upgrade machines / +1 niv max | Meta snowball boutique machines |
+- `machine_oil_power_mult()` stub — à redéfinir selon le pivot (ex. charge / cooldown pulse).
