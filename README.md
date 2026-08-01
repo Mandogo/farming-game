@@ -29,7 +29,7 @@ Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestig
 - ~~UX prestige (confirmation)~~
 - ~~Courbe 1er prestige ≈ 30 min~~
 - Draft reliques (3 choix, ~10) — **fait** (upgrade pts, cap niv.5)
-- Automatisation (machines) — teasers boutique (P1/3/6/10), placement terrain = prochaine feature
+- Automatisation (machines) — teasers boutique ; **spec** : `docs/automation.md` (fertiliseur aérien, jardinier = plot + replante dernier légume)
 - SFX, offline, i18n FR/EN — roadmap
 
 ## Structure
@@ -42,4 +42,5 @@ Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestig
 - `scripts/data/` — CropData, MissionData
 - `assets/textures/` — voir `assets/textures/TEXTURES.txt`
 
-Doc design : `../Greenhouse-Idle-GDD.md`
+Doc design : `../Greenhouse-Idle-GDD.md`  
+Automatisation : `docs/automation.md`

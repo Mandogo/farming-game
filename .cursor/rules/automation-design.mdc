@@ -1,0 +1,19 @@
+---
+description: Spec automatisation (fertiliseur, jardinier, machines) — lire avant d'implémenter ou proposer
+globs:
+  - docs/automation.md
+  - scripts/**/*.gd
+  - assets/textures/ui/auto_*.png
+  - assets/textures/ui/fertilizer.png
+alwaysApply: false
+---
+
+# Automatisation Greenhouse Idle
+
+Quand le travail touche aux machines, à la boutique Automatisation, au placement terrain, ou aux teaser auto_* :
+
+1. **Lire** `docs/automation.md` — c’est la source de vérité des décisions design.
+2. Ne pas réintroduire planteur + récolteuse séparés : c’est le **Jardinier** (occupe un plot, replante le dernier légume du sol).
+3. Fertiliseur = robot **aérien** (n’occupe pas de case cultivable) ; jardinier = **sol**, plot sacrifié.
+4. Portée départ 1, plusieurs exemplaires en boutique (chers), upgrades portée / puissance.
+5. Style visuel machines : suivre `art-style-generation.mdc`.
