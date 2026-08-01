@@ -7,17 +7,20 @@ Spec validée (conversation cloud, 2026-08). Source de vérité pour l’implém
 - Teasers boutique (non achetable) — à aligner sur P1 / P3 / P5 (3 machines).
 - Assets UI : `fertilizer`, `auto_planter`, `auto_harvester`, `auto_delivery` (planteur+récolte → **Jardinier**).
 - Champs préparatoires : `auto_plant_id` sur plot ; relique `machine_oil` (coût boutique active, puissance = stub).
-- Gameplay placement / effets : **pas encore**.
+- Gameplay placement / effets / édition terrain : **pas encore**.
 
 ## Principes communs
 
 - **Pas d’upgrades boutique** pour les machines (ni puissance ni cadence en or).
 - Progression machines via : **achat d’exemplaires** (or) + **portée / cadence dans l’arbre** (PC, reset prestige).
-- Portée départ **1** (Chebyshev : range 1 ≈ 3×3).
+- Portée **R** = anneau Chebyshev **centre exclu** : cases avec `0 < max(|dx|,|dy|) <= R`.  
+  → Range 1 de base = **8 cases** autour (diagonales incluses).
 - Zones qui se chevauchent = OK (overlay moitié-moitié, voir édition terrain).
-- **1 machine du même type par parcelle-ancre**.
-- Relique `machine_oil` : −3 % coûts boutique / niv (déjà en jeu) ; applicable aux achats machines.
-- Terrain = **grille fixe 10×10** ; les terres et machines se placent en **mode édition** (plus de packing `sqrt(n)` auto).
+- **1 machine du même type par case-ancre**.
+- Relique `machine_oil` : −3 % coûts boutique / niv ; applicable aux achats machines.
+- Terrain = **grille fixe 10×10** ; terres + machines placées en **mode édition** (plus de packing `sqrt(n)`).
+- **Prestige** : machines possédées + layout machines **reset** (comme le reste de la run). Terres → `start_plots()` jetons (`deep_roots` inclus).
+- **Saves** : pas de migration des anciennes saves (incompatibles) — **bump version / ignorer** l’ancien fichier. Nouvelle save = positions grille (terres) + ancres machines + stocks.
 
 ---
 
@@ -39,7 +42,7 @@ Cible design : 1er fertiliseur / jardinier ≈ **8–12 commandes** après le pr
 ### Barème jardiniers (×1,75)
 
 260 · 455 · 796 · 1 393 · 2 438 · 4 266 · 7 466 · 13 065 · 22 864 · 40 012  
-→ 10ᵉ ≈ 40k · total ≈ **93k** (+ jusqu’à 10 plots sacrifiés)
+→ 10ᵉ ≈ 40k · total ≈ **93k** (+ jusqu’à 10 plots jardiniers)
 
 ---
 
@@ -47,10 +50,10 @@ Cible design : 1er fertiliseur / jardinier ≈ **8–12 commandes** après le pr
 
 | | |
 |---|---|
-| **Rôle** | Accélère la pousse dans sa zone (passif). |
-| **Placement** | Ancré sur une parcelle ; sprite **au-dessus du centre**. |
-| **Portée** | Départ 1 ; + via arbre (Bras longs, Réseau). |
-| **Plot** | N’occupe **pas** de case cultivable. |
+| **Rôle** | Accélère la pousse sur les **terres dans sa portée** (passif, centre exclu). |
+| **Placement** | Ancré sur une case **terre** ; sprite **au-dessus du centre**. |
+| **Portée** | Départ 1 (= 8 voisins) ; + via arbre (Bras longs, Réseau). |
+| **Plot** | N’occupe **pas** la case (toujours cultivable sous le robot). |
 
 ---
 
@@ -60,10 +63,10 @@ Une seule machine (plus de planteur / récolteuse séparés).
 
 | | |
 |---|---|
-| **Rôle** | Cases **PRÊTES** dans la zone : récolte → stock → **replante**. |
-| **Placement** | **Occupe un plot** ; sprite **au sol** (pas superposé au ferti). |
-| **Portée** | Départ 1 ; + via arbre (Tournée large, Réseau). |
-| **UI** | Ferti = air/centre ; jardinier = sol/plot. Fantômes de portée (couleurs distinctes). |
+| **Rôle** | Sur les terres **PRÊTES** dans sa portée : récolte → stock → **replante** (même tick). |
+| **Cadence base** | **1 action (récolte+replante) toutes les 2,0 s** ; améliorable via **Chaîne vive**. |
+| **Placement** | **Occupe** une case terre ; sprite **au sol**. |
+| **Portée** | Départ 1 (= 8 voisins, **pas** sa propre case) ; + via arbre. |
 
 ### Replante
 
@@ -79,10 +82,11 @@ Une seule machine (plus de planteur / récolteuse séparés).
 
 | | |
 |---|---|
-| **Rôle** | Livre les commandes clients automatiquement. |
+| **Rôle** | Livre **toutes** les commandes dès que le stock suffit. |
 | **Débloc** | Prestige **5**. |
-| **Max** | **1** (pas de multi-achat). |
-| **Terrain** | Pas de range / placement sur plots. |
+| **Max** | **1**. |
+| **Délai** | **Aucun** — instantané dès que les ingrédients sont dispo. |
+| **Terrain** | Pas de placement / range. |
 
 ---
 
@@ -104,58 +108,70 @@ Serre ouverte (hub)
 | **Rouages** | 2 | hub | Spé Machines : coûts **achat machines** −12 % |
 | **Bras longs** | 2 | Rouages | Portée **fertiliseurs +1** |
 | **Tournée large** | 2 | Rouages | Portée **jardiniers +1** |
-| **Chaîne vive** | 2 | Rouages | Jardiniers −20 % délai tournée ; si livreur possédé, −15 % délai livraison |
+| **Chaîne vive** | 2 | Rouages | Jardiniers : délai de tournée **−20 %** (base 2,0 s → 1,6 s) |
 | **Réseau** | 3 | Rouages | Capstone : **+1 portée** fertiliseurs **et** jardiniers |
 
-Portée typique full spé : base 1 + nœud dédié + Réseau ≈ **3** (zone 7×7).
+Portée typique full spé : base 1 + nœud dédié + Réseau ≈ **3** (anneau jusqu’à distance 3, centre exclu).
 
 ---
 
 ## Mode édition terrain (UI simple)
 
-Enjeu majeur de la mise à jour : le joueur **optimise** la forme de ses champs avec les machines.
+Enjeu majeur : optimiser la forme des champs avec les machines.
 
-### Entrée
+### Ouverture
 
-- Bouton **Éditer le terrain** (sur le champ).
-- **Warning** obligatoire : les cultures en cours seront perdues.
-- Confirm → **reset toutes les cultures** (plots vides) + reset des `auto_plant_id` (layout propre).
-- Pendant l’édition : plus de planter / accélérer / récolter.
+- Bouton **Éditer** visible dès le **1er achat de terre** en boutique.
+- **Tutoriel** déclenché à ce moment (comment placer terre / machines / valider / reset).
+- Ouverture en **modal** : pas d’accès au reste du jeu (boutique, commandes, etc.) tant que le modal est ouvert.
+- **Warning** : les cultures en cours seront perdues.
+- Confirm → **reset toutes les cultures** + `auto_plant_id` vidés.
 - **Pas de coût or** pour rearranger.
-- Livreur : **hors** de ce flux (pas de placement terrain).
+- Clics AoE / voisins : si trous dans le layout, c’est le choix du joueur (pas de correctif spécial).
 
-### Étape 1 — Placer la terre
+### Contenu du modal (ordre libre)
 
-- Outils simples : placer / déplacer / retirer la terre.
-- Stock = jetons terre non placés (`unlocked_plots` − terres déjà posées).
-- Achat boutique « parcelle » = +1 jeton à placer (plus déblocage séquentiel invisible).
-- Machines **non proposées** tant que l’étape terre n’est pas validée (**Terre OK** / **Suivant**).
-- Pas d’overlay de range à cette étape.
+Pas d’étapes forcées terre → machines. Le joueur place **dans l’ordre qu’il veut**.
 
-### Étape 2 — Placer les machines (si le joueur en possède)
+- Outils : terre, fertiliseur, jardinier, déplacer, retirer.
+- **Reset complet** (style Clash of Clans) : rend **tous** les jetons terre + **toutes** les machines au stock ; grille vide.
+- Stock affiché : terres `placées/total`, machines `X/X` (ex. Fertiliseurs 2/4, Jardiniers 0/1).
+- Machines **uniquement sur une case terre**.
+- S’il sélectionne une machine alors qu’**aucune terre** n’est placée → petit message d’aide (ex. « Place d’abord une terre — les machines se posent sur la terre »).
+- À l’ouverture (1ʳᵉ ou suivante) : partir du **terrain actuel** du joueur (terres + machines déjà posées).
 
-- Uniquement si stock machines non placées > 0 (fertiliseurs et/ou jardiniers).
-- Placement **uniquement sur une case terre**.
-- Fertiliseur : ancre aérienne sur la terre (n’occupe pas la culture).
-- Jardinier : occupe la case terre.
-- Afficher la **portée actuelle** (base + skills) avec une **area colorée** sur les terres couvertes.
-
-### Couleurs d’overlay
+### Overlays de portée (dans le modal)
 
 | Machine | Couleur |
 |--------|---------|
 | Fertiliseur | **Vert** |
 | Jardinier | **Jaune** |
 
-- Case couverte par **une** machine → teinte pleine (légère, lisible en iso).
-- Case couverte par **les deux** → **moitié-moitié** (split sur la case ; vert | jaune).
-- Couleur des ranges = couleur de la machine.
-- L’icône robot reste sur l’ancre ; l’overlay colore le **sol couvert**.
+- Affichés quand une machine est sélectionnée / survolée / posée, sur les **terres couvertes** (pas le centre ancre pour le calcul de range).
+- Une couleur → teinte pleine légère.
+- Les deux → **moitié-moitié** sur la case.
+- **Hors édition** : pas d’overlay de range permanent — seules les icônes machines sur le terrain.
 
 ### Sortie
 
-- **Valider** → quitte l’édition, reprise du gameplay.
-- Layout + ancres machines persistés pour la run (save).
+- **Valider** : applique le layout, ferme le modal. Autorisé même si machines encore en stock (compteurs `X/X` visibles).
+- **Annuler** : ferme le modal, **restore** le layout d’avant ouverture (cultures déjà perdues après le warning d’entrée — le cancel ne les ramène pas).
+- Layout + machines **persistés** dans la save de run.
+
+### Tactile / mobile
+
+- Chaque case de la grille 10×10 (même vide) doit être **touch-friendly** pour placer / cibler.
+- Drag ou tap-tap selon ce qui est le plus simple en iso ; prioriser des cibles larges.
+
+---
+
+## Save / prestige
+
+| Événement | Comportement |
+|-----------|--------------|
+| Save run | Grille (terres aux coords), machines (type + ancre), stocks non placés, compteurs achetés |
+| Load ancienne save | Ignorer / invalider (bump version) — pas de migrateur |
+| Prestige | Reset machines achetées + layout ; terres = `start_plots()` |
 
 ---
 
@@ -163,16 +179,15 @@ Enjeu majeur de la mise à jour : le joueur **optimise** la forme de ses champs 
 
 | Élément | Priorité |
 |--------|----------|
-| Grille fixe + mode édition (terre) | 1 — prérequis spatial |
+| Grille 10×10 + modal édition (terre, reset, annuler/valider) | 1 |
+| Tuto 1ʳᵉ terre + save positions | 1 |
 | Fertiliseur + overlay vert | 2 |
-| Jardinier + overlay jaune / split | 3 |
-| Livreur | 4 |
-| Branche Atelier | avec ou juste après les machines terrain |
+| Jardinier (2 s) + overlay jaune / split | 3 |
+| Branche Atelier | avec / juste après |
+| Livreur instantané | 4 |
 
 ## Notes techniques
 
-- Aujourd’hui le champ est packé en `sqrt(n)` iso (`main.gd` `_build_iso_field`) → à remplacer par grille 10×10 + cellules terre optionnelles.
-- `auto_plant_id` déjà écrit à la plantation / save ; **vidé à l’entrée édition** (avec les cultures).
-- `harvest_all_ready()` défini mais non branché.
-- `machine_oil_power_mult()` stub — à redéfinir ou ignorer (pas d’upgrade boutique puissance).
-- Teasers UI à passer de 4 lignes (P1/3/6/10) à 3 (P1/3/5) : Fertiliseur, Jardinier, Livreur.
+- Remplacer `_build_iso_field` packing `sqrt(n)` par grille fixe + cellules terre optionnelles.
+- Bump `SAVE_VERSION` (ou équivalent) pour dropper les saves pré-grille.
+- Teasers UI : 3 lignes P1/P3/P5 (Fertiliseur, Jardinier, Livreur).
