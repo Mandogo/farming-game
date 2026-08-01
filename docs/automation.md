@@ -1,20 +1,44 @@
 # Automatisation — décisions design
 
-Spec validée (conversation cloud, 2026-08). À suivre pour l’implémentation et les prochains prompts.
+Spec validée (conversation cloud, 2026-08). Source de vérité pour l’implémentation.
 
-## État actuel
+## État code actuel
 
-- Teasers boutique P1 / P3 / P6 / P10 (non achetable).
-- Assets UI : `fertilizer`, `auto_planter`, `auto_harvester`, `auto_delivery`.
-- Champs préparatoires : `auto_plant_id` sur plot ; relique `machine_oil` (coût boutique active, puissance machines = stub).
+- Teasers boutique (non achetable) — à aligner sur P1 / P3 / P5 (3 machines).
+- Assets UI : `fertilizer`, `auto_planter`, `auto_harvester`, `auto_delivery` (planteur+récolte → **Jardinier**).
+- Champs préparatoires : `auto_plant_id` sur plot ; relique `machine_oil` (coût boutique active, puissance = stub).
 - Gameplay placement / effets : **pas encore**.
 
 ## Principes communs
 
-- Machines **achetables en plusieurs exemplaires** en boutique (prix cher, courbe exponentielle).
-- **Portée** part de **1** (voisinage Chebyshev : range 1 ≈ 3×3 centré sur l’ancre), augmente via upgrades (niveau machine + / ou nœuds arbre de compétences).
+- **Pas d’upgrades boutique** pour les machines (ni puissance ni cadence en or).
+- Progression machines via : **achat d’exemplaires** (or) + **portée / cadence dans l’arbre** (PC, reset prestige).
+- Portée départ **1** (Chebyshev : range 1 ≈ 3×3).
 - Zones qui se chevauchent = OK.
 - **1 machine du même type par parcelle-ancre**.
+- Relique `machine_oil` : −3 % coûts boutique / niv (déjà en jeu) ; applicable aux achats machines.
+
+---
+
+## Boutique
+
+| Machine | Débloc | Prix 1er | Formule (n = déjà possédés) | Max |
+|--------|--------|----------|-----------------------------|-----|
+| **Fertiliseur** | Prestige **1** | **180** or | `180 × 1,70^n` | **10** |
+| **Jardinier** | Prestige **3** | **260** or | `260 × 1,75^n` | **10** |
+| **Livreur** | Prestige **5** | **2 400** or | — | **1** |
+
+Cible design : 1er fertiliseur / jardinier ≈ **8–12 commandes** après le prestige qui les débloque ; ensuite montée rapide.
+
+### Barème fertiliseurs (×1,70)
+
+180 · 306 · 520 · 884 · 1 503 · 2 555 · 4 344 · 7 384 · 12 553 · 21 340  
+→ 10ᵉ ≈ 21k · total ≈ **51k**
+
+### Barème jardiniers (×1,75)
+
+260 · 455 · 796 · 1 393 · 2 438 · 4 266 · 7 466 · 13 065 · 22 864 · 40 012  
+→ 10ᵉ ≈ 40k · total ≈ **93k** (+ jusqu’à 10 plots sacrifiés)
 
 ---
 
@@ -23,44 +47,66 @@ Spec validée (conversation cloud, 2026-08). À suivre pour l’implémentation 
 | | |
 |---|---|
 | **Rôle** | Accélère la pousse dans sa zone (passif). |
-| **Débloc** | Tôt (teaser actuel P1). |
-| **Placement** | Ancré sur une parcelle ; sprite **au-dessus du centre** (bras / drone suspendu). |
-| **Portée** | Départ range 1, upgradeable. |
-| **Quantité** | Plusieurs en boutique, chers. |
-| **Upgrades** | Puissance (% vitesse) via niveau machine ; portée via arbre / upgrades. |
-
-Ne **occupe pas** une case cultivable (surplombe seulement).
+| **Placement** | Ancré sur une parcelle ; sprite **au-dessus du centre**. |
+| **Portée** | Départ 1 ; + via arbre (Bras longs, Réseau). |
+| **Plot** | N’occupe **pas** de case cultivable. |
 
 ---
 
 ## 2. Jardinier (plante + récolte fusionnés)
 
-Planteur et récolteuse **ne sont pas deux machines séparées** : une seule unité « Jardinier ».
+Une seule machine (plus de planteur / récolteuse séparés).
 
 | | |
 |---|---|
-| **Rôle** | Sur les cases **PRÊTES** dans sa zone : récolte → stock, puis **replante**. |
-| **Débloc** | Plus tard / plus cher que le fertiliseur (ex. ex-P3). |
-| **Placement** | **Occupe un plot de terre** (contrepartie : une case en moins cultivable). Sprite **au sol** (bot roues / chenilles), pas superposé au fertiliseur aérien. |
-| **Portée** | Même principe que le fertiliseur : départ range 1, upgradeable. |
-| **Quantité** | Plusieurs en boutique, encore plus chers. |
-| **UI** | Ferti = air/centre ; jardinier = sol/plot occupé → silhouettes distinctes. Portée en fantôme (couleurs différentes). |
+| **Rôle** | Cases **PRÊTES** dans la zone : récolte → stock → **replante**. |
+| **Placement** | **Occupe un plot** ; sprite **au sol** (pas superposé au ferti). |
+| **Portée** | Départ 1 ; + via arbre (Tournée large, Réseau). |
+| **UI** | Ferti = air/centre ; jardinier = sol/plot. Fantômes de portée (couleurs distinctes). |
 
 ### Replante
 
-- Replante le **dernier légume présent sur cette case** (`auto_plant_id` local au plot).
+- Replante le **dernier légume de la case** (`auto_plant_id`).
 - Mis à jour à chaque plantation (manuelle ou auto).
-- **Pas** de panneau de config de graine au placement.
-- Pour changer de culture : planter une fois à la main sur la case.
-- Si `auto_plant_id` vide : récolte seulement (ou ignore jusqu’à une première plantation).
+- Pas de panneau de config de graine.
+- Changer de culture = planter une fois à la main sur la case.
+- `auto_plant_id` vide → récolte seulement (ou ignore jusqu’à une 1ʳᵉ plantation).
 
 ---
 
-## 3. Livreur auto (plus tard)
+## 3. Livreur auto
 
-- Hors scope immédiat.
-- Automatise les **commandes clients** (autre système que les plots).
-- Teaser boutique actuel P10.
+| | |
+|---|---|
+| **Rôle** | Livre les commandes clients automatiquement. |
+| **Débloc** | Prestige **5**. |
+| **Max** | **1** (pas de multi-achat). |
+| **Terrain** | Pas de range / placement sur plots. |
+
+---
+
+## Arbre de compétences — branche **Atelier**
+
+Nouvelle spé depuis le hub `Serre ouverte`. Coûts alignés sur les autres branches (2 / 2 / 3). Reset au prestige.
+
+```
+Serre ouverte (hub)
+ └─ Rouages (2 PC)
+      ├─ Bras longs (2)
+      ├─ Tournée large (2)
+      ├─ Chaîne vive (2)
+      └─ Réseau (3)          ← capstone
+```
+
+| Nœud | PC | Parent | Effet |
+|------|-----|--------|--------|
+| **Rouages** | 2 | hub | Spé Machines : coûts **achat machines** −12 % |
+| **Bras longs** | 2 | Rouages | Portée **fertiliseurs +1** |
+| **Tournée large** | 2 | Rouages | Portée **jardiniers +1** |
+| **Chaîne vive** | 2 | Rouages | Jardiniers −20 % délai tournée ; si livreur possédé, −15 % délai livraison |
+| **Réseau** | 3 | Rouages | Capstone : **+1 portée** fertiliseurs **et** jardiniers |
+
+Portée typique full spé : base 1 + nœud dédié + Réseau ≈ **3** (zone 7×7).
 
 ---
 
@@ -68,13 +114,13 @@ Planteur et récolteuse **ne sont pas deux machines séparées** : une seule uni
 
 | Machine | Job | Priorité |
 |--------|-----|----------|
-| Fertiliseur | *plus vite* | 1 — première à implémenter |
-| Jardinier | *sans clic sur les parcelles* | 2 |
-| Livreur | *sans clic sur les commandes* | 3 |
+| Fertiliseur | *plus vite* | 1 |
+| Jardinier | *sans clic parcelles* | 2 |
+| Livreur | *sans clic commandes* | 3 |
 
-## Notes techniques existantes
+## Notes techniques
 
-- `GameState` plots : `auto_plant_id` déjà écrit à la plantation / save.
+- `auto_plant_id` déjà écrit à la plantation / save.
 - `harvest_all_ready()` défini mais non branché.
-- `machine_oil_power_mult()` stub (+10 %/niv) prévu pour rayon / efficacité machines.
-- Ancien `has_sprinkler` : migration save qui ignore les cases sprinkler.
+- `machine_oil_power_mult()` stub — à redéfinir ou ignorer (pas d’upgrade boutique puissance).
+- Teasers UI à passer de 4 lignes (P1/3/6/10) à 3 (P1/3/5) : Fertiliseur, Jardinier, Livreur.
