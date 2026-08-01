@@ -12,8 +12,9 @@ alwaysApply: false
 
 Quand le travail touche aux machines, à la boutique Automatisation, au placement terrain, ou aux teaser auto_* :
 
-1. **Lire** `docs/automation.md` — source de vérité (boutique, arbre Atelier, placement).
+1. **Lire** `docs/automation.md` — source de vérité (boutique, arbre, édition terrain).
 2. Ne pas réintroduire planteur + récolteuse séparés : c’est le **Jardinier** (occupe un plot, replante le dernier légume du sol).
 3. Fertiliseur = robot **aérien** ; jardinier = **sol**, plot sacrifié ; livreur = P5, max 1.
 4. Pas d’upgrades boutique machines. Portée / cadence = arbre ; quantité = achats (max 10 ferti / 10 jardinier).
-5. Style visuel machines : suivre `art-style-generation.mdc`.
+5. Mode édition : warning → reset cultures → terre d’abord → machines sur terre ; overlays vert/jaune, split moitié-moitié si chevauchement.
+6. Style visuel machines : suivre `art-style-generation.mdc`.

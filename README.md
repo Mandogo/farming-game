@@ -29,7 +29,7 @@ Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestig
 - ~~UX prestige (confirmation)~~
 - ~~Courbe 1er prestige ≈ 30 min~~
 - Draft reliques (3 choix, ~10) — **fait** (upgrade pts, cap niv.5)
-- Automatisation (machines) — **spec** : `docs/automation.md` (boutique P1/P3/P5, branche Atelier, max 10 ferti/jardinier)
+- Automatisation (machines) — **spec** : `docs/automation.md` (boutique P1/P3/P5, édition terrain, branche Atelier)
 - SFX, offline, i18n FR/EN — roadmap
 
 ## Structure

@@ -14,9 +14,10 @@ Spec validée (conversation cloud, 2026-08). Source de vérité pour l’implém
 - **Pas d’upgrades boutique** pour les machines (ni puissance ni cadence en or).
 - Progression machines via : **achat d’exemplaires** (or) + **portée / cadence dans l’arbre** (PC, reset prestige).
 - Portée départ **1** (Chebyshev : range 1 ≈ 3×3).
-- Zones qui se chevauchent = OK.
+- Zones qui se chevauchent = OK (overlay moitié-moitié, voir édition terrain).
 - **1 machine du même type par parcelle-ancre**.
 - Relique `machine_oil` : −3 % coûts boutique / niv (déjà en jeu) ; applicable aux achats machines.
+- Terrain = **grille fixe 10×10** ; les terres et machines se placent en **mode édition** (plus de packing `sqrt(n)` auto).
 
 ---
 
@@ -110,17 +111,68 @@ Portée typique full spé : base 1 + nœud dédié + Réseau ≈ **3** (zone 7×
 
 ---
 
+## Mode édition terrain (UI simple)
+
+Enjeu majeur de la mise à jour : le joueur **optimise** la forme de ses champs avec les machines.
+
+### Entrée
+
+- Bouton **Éditer le terrain** (sur le champ).
+- **Warning** obligatoire : les cultures en cours seront perdues.
+- Confirm → **reset toutes les cultures** (plots vides) + reset des `auto_plant_id` (layout propre).
+- Pendant l’édition : plus de planter / accélérer / récolter.
+- **Pas de coût or** pour rearranger.
+- Livreur : **hors** de ce flux (pas de placement terrain).
+
+### Étape 1 — Placer la terre
+
+- Outils simples : placer / déplacer / retirer la terre.
+- Stock = jetons terre non placés (`unlocked_plots` − terres déjà posées).
+- Achat boutique « parcelle » = +1 jeton à placer (plus déblocage séquentiel invisible).
+- Machines **non proposées** tant que l’étape terre n’est pas validée (**Terre OK** / **Suivant**).
+- Pas d’overlay de range à cette étape.
+
+### Étape 2 — Placer les machines (si le joueur en possède)
+
+- Uniquement si stock machines non placées > 0 (fertiliseurs et/ou jardiniers).
+- Placement **uniquement sur une case terre**.
+- Fertiliseur : ancre aérienne sur la terre (n’occupe pas la culture).
+- Jardinier : occupe la case terre.
+- Afficher la **portée actuelle** (base + skills) avec une **area colorée** sur les terres couvertes.
+
+### Couleurs d’overlay
+
+| Machine | Couleur |
+|--------|---------|
+| Fertiliseur | **Vert** |
+| Jardinier | **Jaune** |
+
+- Case couverte par **une** machine → teinte pleine (légère, lisible en iso).
+- Case couverte par **les deux** → **moitié-moitié** (split sur la case ; vert | jaune).
+- Couleur des ranges = couleur de la machine.
+- L’icône robot reste sur l’ancre ; l’overlay colore le **sol couvert**.
+
+### Sortie
+
+- **Valider** → quitte l’édition, reprise du gameplay.
+- Layout + ancres machines persistés pour la run (save).
+
+---
+
 ## Découpage produit
 
-| Machine | Job | Priorité |
-|--------|-----|----------|
-| Fertiliseur | *plus vite* | 1 |
-| Jardinier | *sans clic parcelles* | 2 |
-| Livreur | *sans clic commandes* | 3 |
+| Élément | Priorité |
+|--------|----------|
+| Grille fixe + mode édition (terre) | 1 — prérequis spatial |
+| Fertiliseur + overlay vert | 2 |
+| Jardinier + overlay jaune / split | 3 |
+| Livreur | 4 |
+| Branche Atelier | avec ou juste après les machines terrain |
 
 ## Notes techniques
 
-- `auto_plant_id` déjà écrit à la plantation / save.
+- Aujourd’hui le champ est packé en `sqrt(n)` iso (`main.gd` `_build_iso_field`) → à remplacer par grille 10×10 + cellules terre optionnelles.
+- `auto_plant_id` déjà écrit à la plantation / save ; **vidé à l’entrée édition** (avec les cultures).
 - `harvest_all_ready()` défini mais non branché.
 - `machine_oil_power_mult()` stub — à redéfinir ou ignorer (pas d’upgrade boutique puissance).
 - Teasers UI à passer de 4 lignes (P1/3/6/10) à 3 (P1/3/5) : Fertiliseur, Jardinier, Livreur.
