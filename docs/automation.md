@@ -150,7 +150,7 @@ Pas d’étapes forcées terre → machines. Le joueur place **dans l’ordre qu
 - Affichés quand une machine est sélectionnée / survolée / posée, sur les **terres couvertes** (pas le centre ancre pour le calcul de range).
 - Une couleur → teinte pleine légère.
 - Les deux → **moitié-moitié** sur la case.
-- **Hors édition** : pas d’overlay de range permanent — seules les icônes machines sur le terrain.
+- **Hors édition** : pas d’overlay de range permanent — **uniquement** les icônes machines sur le terrain (validé).
 
 ### Sortie
 
@@ -162,6 +162,7 @@ Pas d’étapes forcées terre → machines. Le joueur place **dans l’ordre qu
 
 - Chaque case de la grille 10×10 (même vide) doit être **touch-friendly** pour placer / cibler.
 - Drag ou tap-tap selon ce qui est le plus simple en iso ; prioriser des cibles larges.
+- **Zoom** du champ en édition : prévu si les cases sont trop petites — **plus tard** (pas bloquant v1).
 
 ---
 
