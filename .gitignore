@@ -1,0 +1,16 @@
+# Godot
+.godot/
+*.translation
+
+# Python tools
+tools/__pycache__/
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / éditeur
+.DS_Store
+Thumbs.db
+*.swp
+*~

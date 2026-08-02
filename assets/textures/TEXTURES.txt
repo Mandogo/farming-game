@@ -3,41 +3,20 @@
 Structure
 ---------
 assets/textures/
-  blocks/          # faces pour blocs iso (moteur)
-  crops/           # plantes overlay (6 stages)
-  icons/           # icônes graines (légumes actifs)
-  ui/              # interface
-  backgrounds/     # fonds
+  backgrounds/   # sky, field
+  blocks/        # soil_a|b|c — top.png + side.png (iso)
+  crops/         # tomato|carrot|pepper|eggplant|mushroom|broccoli — stage_1..6
+  icons/         # icônes graines
+  ui/            # interface (+ fertilizer, auto_planter, auto_harvester, auto_delivery)
 
-Régénération
-------------
-  Terre (variantes) : py tools/generate_soil_faces.py
-  Stages cultures   : py tools/process_crop_stages.py
-  Icônes UI flat    : py tools/refresh_ui_flat.py
+Scripts tools/ encore utiles
+----------------------------
+  py tools/generate_soil_faces.py   # variantes terre
+  py tools/process_crop_stages.py   # stages cultures
+  py tools/refresh_ui_flat.py       # icônes UI flat
+  py tools/strip_ui_white_bg.py     # fond transparent UI
 
 Direction visuelle
 ------------------
   Flat cartoon casual (contours épais, aplats) — serre cozy claire.
-  Pas de dark UI, pas de violet rush.
-
-Blocs iso — 2 fichiers seulement
---------------------------------
-  blocks/<nom>/top.png   REQUIS — vue de dessus CARRÉE (256×256)
-  blocks/<nom>/side.png  REQUIS — une face latérale (256×170)
-
-Blocs attendus
---------------
-  blocks/soil_a/   terre cultivable (variante A)
-  blocks/soil_b/   terre (variante B)
-  blocks/soil_c/   terre (variante C)
-
-Les parcelles alternent soil_a / soil_b / soil_c.
-
-Cultures actives
-----------------
-  crops/tomato|carrot|pepper|eggplant|mushroom|broccoli/stage_1..6.png
-  icons/<crop>.png
-
-Fonds
------
-  backgrounds/sky.png , field.png
+  Voir aussi .cursor/rules/art-style-generation.mdc

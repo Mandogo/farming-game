@@ -5,42 +5,42 @@ Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestig
 ## Lancer le jeu
 
 1. Installe / ouvre **Godot 4.4+**
-2. **Import** → dossier `greenhouse-idle`
-3. Appuie sur **F5** (Play)
+2. **Import** → ce dossier
+3. **F5** (Play)
 
 ```powershell
 & "..\tools\Godot_v4.4.1-stable_win64.exe" --path .
 ```
 
+## Docs
+
+| Fichier | Rôle |
+|--------|------|
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Roadmap vivante** — coche / ajoute tes idées |
+| [`docs/automation.md`](docs/automation.md) | Spec automatisation + édition terrain |
+| [`assets/textures/TEXTURES.txt`](assets/textures/TEXTURES.txt) | Organisation des textures + scripts utiles |
+
 ## Boucle actuelle
 
 1. Clique une parcelle vide pour **planter** (gratuit)
-2. Clique la pousse pour **accélérer** (1 clic = 1 tick, pas de hold)
+2. Clique la pousse pour **accélérer** (1 clic = 1 tick)
 3. Clique **PRÊT** pour **récolter** → stock
 4. **Livre** les commandes → or + XP
-5. Enchaîne des **combos de livraisons** → boost de pousse temporaire
-6. Dépense l’or en **boutique**, les PC dans l’**arbre de compétences**
-7. Atteins le niveau requis → **Prestige** → points pour reliques
+5. Combos de livraisons → boost de pousse temporaire
+6. Or en **boutique**, PC dans l’**arbre**, prestige → **reliques**
 
-## Prochaines features
+## Structure du repo
 
-- ~~Vente directe (bouton Sell + modal)~~
-- ~~Onglet Missions (daily / weekly / carrière)~~
-- ~~UX prestige (confirmation)~~
-- ~~Courbe 1er prestige ≈ 30 min~~
-- Draft reliques (3 choix, ~10) — **fait** (upgrade pts, cap niv.5)
-- Automatisation (machines) — **spec** : `docs/automation.md` (boutique P1/P3/P5, édition terrain, branche Atelier)
-- SFX, offline, i18n FR/EN — roadmap
+```
+assets/textures/   backgrounds, blocks, crops, icons, ui
+docs/              ROADMAP + specs
+scenes/            main.tscn, plot_tile.tscn
+scripts/
+  autoloads/       game_state.gd
+  data/            CropData, MissionData
+  ui/              modals & panels
+  *.gd             main, plot_tile, iso, theme…
+tools/             scripts Python art encore utiles (4)
+```
 
-## Structure
-
-- `scripts/autoloads/game_state.gd` — logique métier
-- `scripts/main.gd` — UI principale
-- `scripts/ui/` — modals (sell, prestige) + panel missions
-- `scripts/iso_block_builder.gd` — blocs iso
-- `scenes/main.tscn` — scène principale
-- `scripts/data/` — CropData, MissionData
-- `assets/textures/` — voir `assets/textures/TEXTURES.txt`
-
-Doc design : `../Greenhouse-Idle-GDD.md`  
-Automatisation : `docs/automation.md`
+Pas de cache Godot / `__pycache__` versionnés (voir `.gitignore`).
