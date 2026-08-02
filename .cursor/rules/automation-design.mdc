@@ -1,0 +1,20 @@
+---
+description: Spec automatisation (fertiliseur, jardinier, machines) — lire avant d'implémenter ou proposer
+globs:
+  - docs/automation.md
+  - scripts/**/*.gd
+  - assets/textures/ui/auto_*.png
+  - assets/textures/ui/fertilizer.png
+alwaysApply: false
+---
+
+# Automatisation Greenhouse Idle
+
+Quand le travail touche aux machines, à la boutique Automatisation, au placement terrain, ou aux teaser auto_* :
+
+1. **Lire** `docs/automation.md` — source de vérité (boutique, arbre, édition, save).
+2. Jardinier = plante+récolte (occupe un plot, replante dernier légume) ; cadence base **2 s** ; range centre exclu (8 voisins au rang 1).
+3. Fertiliseur aérien ; livreur P5 instantané (toutes commandes si stock) ; prestige reset machines.
+4. Édition = **modal** ordre libre ; min 1 terre pour poser machines ; Reset total (CoC) ; Annuler + Valider ; compteurs `X/X`.
+5. Overlays range vert/jaune en édition seulement ; split moitié-moitié. Pas de migrateur d’anciennes saves (bump version).
+6. Style visuel machines : suivre `art-style-generation.mdc`.
