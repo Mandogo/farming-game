@@ -1,25 +1,39 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, viewport-fit=cover">
+		<meta name="mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-capable" content="yes">
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+		<meta name="theme-color" content="#85a87a">
 		<title>Crop Express Idle</title>
 		<style>
-html, body, #canvas {
+html, body {
 	margin: 0;
 	padding: 0;
 	border: 0;
-}
-
-body {
-	color: white;
-	background-color: black;
+	width: 100%;
+	height: 100%;
+	height: 100dvh;
 	overflow: hidden;
+	position: fixed;
+	inset: 0;
 	touch-action: none;
+	-webkit-user-select: none;
+	user-select: none;
+	background-color: #85a87a;
+	color: white;
 }
 
 #canvas {
 	display: block;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	width: 100%;
+	height: 100%;
+	outline: none;
 }
 
 #canvas:focus {
@@ -89,9 +103,38 @@ body {
 	text-align: center;
 	z-index: 1;
 }
+
+#mobile-tip {
+	display: none;
+	position: fixed;
+	left: 50%;
+	bottom: max(12px, env(safe-area-inset-bottom, 0px));
+	transform: translateX(-50%);
+	z-index: 20;
+	max-width: min(92vw, 420px);
+	padding: 10px 14px;
+	border-radius: 12px;
+	background: rgba(20, 28, 22, 0.88);
+	color: #f2f5ef;
+	font: 600 13px/1.35 system-ui, -apple-system, Segoe UI, sans-serif;
+	text-align: center;
+	box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+	pointer-events: auto;
+}
+
+#mobile-tip button {
+	margin-top: 8px;
+	border: 0;
+	border-radius: 8px;
+	padding: 8px 12px;
+	background: #6f9a5e;
+	color: #fff;
+	font: 700 13px/1 system-ui, sans-serif;
+}
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="crops_express_idle.icon.png" />
 <link rel="apple-touch-icon" href="crops_express_idle.apple-touch-icon.png"/>
+<link rel="manifest" href="crops_express_idle.manifest.json">
 
 	</head>
 	<body>
@@ -109,9 +152,14 @@ body {
 			<div id="status-notice"></div>
 		</div>
 
+		<div id="mobile-tip" role="dialog" aria-live="polite">
+			Pour un vrai plein écran (sans barre d’URL) : ajoute le jeu à l’écran d’accueil.
+			<button type="button" id="mobile-tip-dismiss">OK</button>
+		</div>
+
 		<script src="crops_express_idle.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":10345844,"crops_express_idle.wasm":39513091},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":9760768,"crops_express_idle.wasm":39513091},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -119,9 +167,45 @@ const engine = new Engine(GODOT_CONFIG);
 	const statusOverlay = document.getElementById('status');
 	const statusProgress = document.getElementById('status-progress');
 	const statusNotice = document.getElementById('status-notice');
+	const tip = document.getElementById('mobile-tip');
+	const tipBtn = document.getElementById('mobile-tip-dismiss');
 
 	let initializing = true;
 	let statusMode = '';
+
+	function fitViewport() {
+		const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+		const w = (window.visualViewport && window.visualViewport.width) || window.innerWidth;
+		document.documentElement.style.height = h + 'px';
+		document.body.style.height = h + 'px';
+		document.documentElement.style.width = w + 'px';
+		document.body.style.width = w + 'px';
+		window.dispatchEvent(new Event('resize'));
+	}
+
+	fitViewport();
+	window.addEventListener('resize', fitViewport);
+	window.addEventListener('orientationchange', () => setTimeout(fitViewport, 120));
+	if (window.visualViewport) {
+		window.visualViewport.addEventListener('resize', fitViewport);
+		window.visualViewport.addEventListener('scroll', fitViewport);
+	}
+
+	function isStandalone() {
+		return window.matchMedia('(display-mode: standalone)').matches
+			|| window.navigator.standalone === true;
+	}
+
+	function maybeShowMobileTip() {
+		const mobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+		if (!mobile || isStandalone()) return;
+		if (localStorage.getItem('cei_hide_mobile_tip') === '1') return;
+		tip.style.display = 'block';
+		tipBtn.addEventListener('click', () => {
+			localStorage.setItem('cei_hide_mobile_tip', '1');
+			tip.style.display = 'none';
+		});
+	}
 
 	function setStatusMode(mode) {
 		if (statusMode === mode || !initializing) {
@@ -130,6 +214,8 @@ const engine = new Engine(GODOT_CONFIG);
 		if (mode === 'hidden') {
 			statusOverlay.remove();
 			initializing = false;
+			maybeShowMobileTip();
+			fitViewport();
 			return;
 		}
 		statusOverlay.style.visibility = 'visible';
@@ -174,7 +260,6 @@ const engine = new Engine(GODOT_CONFIG);
 			} catch (err) {
 				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
 			}
-			// There's a chance that installing the service worker would fix the issue
 			Promise.race([
 				serviceWorkerRegistrationPromise.then((registration) => {
 					if (registration != null) {
@@ -182,18 +267,15 @@ const engine = new Engine(GODOT_CONFIG);
 					}
 					return registration;
 				}).then(() => engine.installServiceWorker()),
-				// For some reason, `getRegistration()` can stall
 				new Promise((resolve) => {
 					setTimeout(() => resolve(), 2000);
 				}),
 			]).then(() => {
-				// Reload if there was no error.
 				window.location.reload();
 			}).catch((err) => {
 				console.error('Error while registering service worker:', err);
 			});
 		} else {
-			// Display the message as usual
 			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
 			displayFailureNotice(missingMsg + missing.join('\n'));
 		}
