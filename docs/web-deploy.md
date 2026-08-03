@@ -1,45 +1,32 @@
 # Jouer en ligne (GitHub Pages)
 
-Le dossier `web_export/` contient l’export Web Godot. La pipeline
-[`.github/workflows/deploy-web.yml`](../.github/workflows/deploy-web.yml)
-le publie automatiquement sur **GitHub Pages**.
+URL : **https://mandogo.github.io/farming-game/**
 
-URL prévue (après activation) :
+Le jeu est dans `docs/` ; un workflow GitHub Actions le publie.
 
-**https://mandogo.github.io/farming-game/**
+## À faire maintenant (repo déjà public)
 
-## Première mise en ligne (une seule fois)
+1. **Commit + push** sur `main` :
+   - le dossier `docs/` (avec `index.html`, `.wasm`, `.pck`, etc.)
+   - `.github/workflows/deploy-pages.yml`
+2. Sur **https://github.com/Mandogo/farming-game/settings/pages** :
+   - **Source** = **GitHub Actions** (déjà le cas chez toi)
+   - **Ne clique pas** sur « GitHub Pages Jekyll »
+   - **Custom domain** : laisse **vide**
+3. Onglet **Actions** du repo → lance / attends **Deploy GitHub Pages** (vert).
+4. Reviens dans **Settings → Pages** : tu dois voir *Your site is live at https://mandogo.github.io/farming-game/*
 
-1. **Commit + push** le dossier `web_export/` et le workflow sur `main`  
-   (fichiers `.html`, `.js`, `.wasm`, `.pck`, images — pas besoin des `.import`).
+Si le workflow n’apparaît pas : **Actions** → **Deploy GitHub Pages** → **Run workflow**.
 
-2. Sur GitHub → ton repo → **Settings** → **Pages**  
-   - **Source** : *GitHub Actions* (pas « Deploy from a branch »).
+## Mises à jour
 
-3. Onglet **Actions** : attends le workflow **Deploy Web (GitHub Pages)** (vert).
+```text
+Godot → Export Web → docs/crops_express_idle.html
+Copy-Item -Force docs\crops_express_idle.html docs\index.html
+git add docs ; git commit ; git push
+```
 
-4. Ouvre l’URL ci-dessus. Au premier chargement, le `.wasm` (~37 Mo) peut prendre un moment.
+## Variante sans Actions (optionnelle)
 
-## Mises à jour suivantes
-
-1. Dans Godot : **Project → Export → Web** → ré-exporte dans `web_export/`
-   (garde **Thread Support** = off — déjà le cas dans `export_presets.cfg`).
-2. Commit / push `web_export/`.
-3. Le workflow redéploie tout seul.
-
-Tu peux aussi lancer un déploiement manuel : **Actions** → **Deploy Web** → **Run workflow**.
-
-## Points importants
-
-| Sujet | Détail |
-|--------|--------|
-| Threads | Export **sans** threads → pas besoin des headers COOP/COEP (GitHub Pages ne les fournit pas). |
-| Repo privé | Pages sur compte gratuit = repo **public**, ou plan payant. |
-| Cache navigateur | Après un redeploy, un hard refresh (Ctrl+F5) si l’ancienne version reste. |
-| Taille | Le `.wasm` est gros : normal ; GitHub accepte jusqu’à 100 Mo / fichier. |
-
-## Dépannage rapide
-
-- **404** : Pages pas encore activé en source « GitHub Actions », ou workflow pas passé.
-- **SharedArrayBuffer / threads** : tu as ré-exporté avec threads — décoche Thread Support et ré-exporte.
-- **Écran noir / erreurs** : ouvre la console (F12) ; vérifie que `crops_express_idle.pck` et `.wasm` sont bien dans le dépôt.
+Dans Settings → Pages, si le menu **Source** propose **Deploy from a branch** :
+Branch `main`, folder `/docs`, Save. Même URL.

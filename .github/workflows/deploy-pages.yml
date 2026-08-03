@@ -1,0 +1,47 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare site from docs/
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          # Fichiers du jeu (pas les .md / .import)
+          for f in docs/index.html docs/crops_express_idle.* docs/.nojekyll; do
+            if [ -e "$f" ]; then cp -a "$f" _site/; fi
+          done
+          if [ ! -f _site/index.html ]; then
+            echo "::error::docs/index.html manquant — exporte le jeu Web dans docs/ puis push."
+            exit 1
+          fi
+          ls -lah _site
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

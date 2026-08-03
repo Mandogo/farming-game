@@ -3,6 +3,7 @@
 *.translation
 
 # Artefacts éditeur dans l’export Web (pas servis en ligne)
+docs/*.import
 web_export/*.import
 
 # Python tools
