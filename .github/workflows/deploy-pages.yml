@@ -3,6 +3,9 @@ name: Deploy GitHub Pages
 on:
   push:
     branches: [main]
+    paths:
+      - "web_export/**"
+      - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -23,16 +26,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Prepare site from docs/
+      - name: Prepare site from web_export/
         run: |
           set -euo pipefail
           mkdir -p _site
-          # Fichiers du jeu (pas les .md / .import)
-          for f in docs/index.html docs/crops_express_idle.* docs/.nojekyll; do
-            if [ -e "$f" ]; then cp -a "$f" _site/; fi
-          done
+          find web_export -maxdepth 1 -type f ! -name '*.import' -exec cp -t _site {} +
+          if [ -f _site/crops_express_idle.html ] && [ ! -f _site/index.html ]; then
+            cp _site/crops_express_idle.html _site/index.html
+          fi
+          touch _site/.nojekyll
           if [ ! -f _site/index.html ]; then
-            echo "::error::docs/index.html manquant — exporte le jeu Web dans docs/ puis push."
+            echo "::error::web_export/index.html manquant — exporte le jeu Web dans web_export/ puis push."
             exit 1
           fi
           ls -lah _site

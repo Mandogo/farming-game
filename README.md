@@ -14,14 +14,14 @@ Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestig
 
 ## Jouer en ligne
 
-Export Web dans `docs/` → GitHub Pages (branche `main` / dossier `/docs`).  
+Export Web dans `web_export/` → GitHub Pages.  
 Guide : [`docs/web-deploy.md`](docs/web-deploy.md) → **https://mandogo.github.io/farming-game/**
 
 ## Docs
 
 | Fichier | Rôle |
 |--------|------|
-| [`docs/web-deploy.md`](docs/web-deploy.md) | Publier le jeu (Pages, sans Actions) |
+| [`docs/web-deploy.md`](docs/web-deploy.md) | Publier le jeu (GitHub Pages) |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Roadmap vivante** — coche / ajoute tes idées |
 | [`docs/automation.md`](docs/automation.md) | Spec automatisation + édition terrain |
 | [`assets/textures/TEXTURES.txt`](assets/textures/TEXTURES.txt) | Organisation des textures + scripts utiles |
