@@ -1,4 +1,4 @@
-"""Régénère les icônes UI en flat cartoon (contours épais, aplats) — style Greenhouse Idle."""
+"""Régénère les icônes UI en flat cartoon (contours épais, aplats) — style Crop Express Idle."""
 from __future__ import annotations
 
 import math

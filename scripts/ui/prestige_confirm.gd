@@ -85,7 +85,7 @@ func _build(textures: Dictionary) -> void:
 
 	body.add_child(_section(
 		"Tu perds (run)",
-		"Or, XP, niveau, compétences, stock, améliorations boutique et parcelles achetées.",
+		"Or, XP, niveau, compétences, stock, améliorations boutique, parcelles et machines.",
 		Color(0.62, 0.28, 0.28)
 	))
 	body.add_child(_section(

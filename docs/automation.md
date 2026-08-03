@@ -4,10 +4,13 @@ Spec validée (conversation cloud, 2026-08). Source de vérité pour l’implém
 
 ## État code actuel
 
-- Teasers boutique (non achetable) — à aligner sur P1 / P3 / P5 (3 machines).
-- Assets UI : `fertilizer`, `auto_planter`, `auto_harvester`, `auto_delivery` (planteur+récolte → **Jardinier**).
-- Champs préparatoires : `auto_plant_id` sur plot ; relique `machine_oil` (coût boutique active, puissance = stub).
-- Gameplay placement / effets / édition terrain : **pas encore**.
+- Grille fixe 10×10 + jetons terre + modal édition (`TerrainEditModal`).
+- Boutique machines achetable P1 / P3 / P5 (Fertiliseur, Jardinier, Livreur).
+- Gameplay fertiliseur (×1,5), jardinier (2 s), livreur instantané.
+- Branche Atelier (Rouages → 4 nœuds).
+- Save v8 ; prestige reset machines + layout.
+- Assets UI : `fertilizer`, `auto_planter` (jardinier), `auto_delivery` ; `auto_harvester` conservé (icône skill).
+- Relique `machine_oil` : −3 % coûts boutique / niv (machines incluses via `machine_shop_cost_mult`).
 
 ## Principes communs
 
@@ -121,19 +124,22 @@ Enjeu majeur : optimiser la forme des champs avec les machines.
 
 ### Ouverture
 
-- Bouton **Éditer** visible dès le **1er achat de terre** en boutique.
-- **Tutoriel** déclenché à ce moment (comment placer terre / machines / valider / reset).
-- Ouverture en **modal** : pas d’accès au reste du jeu (boutique, commandes, etc.) tant que le modal est ouvert.
-- **Warning** : les cultures en cours seront perdues.
-- Confirm → **reset toutes les cultures** + `auto_plant_id` vidés.
+- Achat boutique « Nouvelle parcelle » → **place auto** une terre adjacente au champ ; le joueur peut **réorganiser** ensuite via Éditer.
+- Bouton **Éditer** visible dès le **1er achat** de parcelle (pas au lancement avec la terre de départ).
+- **Tutoriel** à ce moment : Éditer sert à réorganiser (pas obligatoire pour poser la 1ʳᵉ achetée).
+- Hors édition : **aucune** silhouette de grille vide — seulement les terres placées, cadrées.
+- Ouverture en **modal** : pas d’accès au reste du jeu tant que le modal est ouvert.
+- **Pas de warning** à l’entrée : le draft n’altère le terrain live qu’à **Accepter** ; **Annuler** restaure le snapshot d’avant Éditer.
 - **Pas de coût or** pour rearranger.
 - Clics AoE / voisins : si trous dans le layout, c’est le choix du joueur (pas de correctif spécial).
+- Grille d’édition en **2D** (vue carte), pas iso.
 
 ### Contenu du modal (ordre libre)
 
 Pas d’étapes forcées terre → machines. Le joueur place **dans l’ordre qu’il veut**.
 
-- Outils : terre, fertiliseur, jardinier, déplacer, retirer.
+- Outils : terre, fertiliseur, jardinier (recliquer pour retirer / déséquiper — pas d’outil « Retirer » séparé).
+- Layout modal : jetons **à gauche**, grille **2D au centre**, **Reset / Annuler / Accepter** en bas.
 - **Reset complet** (style Clash of Clans) : rend **tous** les jetons terre + **toutes** les machines au stock ; grille vide.
 - Stock affiché : terres `placées/total`, machines `X/X` (ex. Fertiliseurs 2/4, Jardiniers 0/1).
 - Machines **uniquement sur une case terre**.
@@ -154,14 +160,14 @@ Pas d’étapes forcées terre → machines. Le joueur place **dans l’ordre qu
 
 ### Sortie
 
-- **Valider** : applique le layout, ferme le modal. Autorisé même si machines encore en stock (compteurs `X/X` visibles).
-- **Annuler** : ferme le modal, **restore** le layout d’avant ouverture (cultures déjà perdues après le warning d’entrée — le cancel ne les ramène pas).
+- **Accepter** : applique le layout, ferme le modal. Autorisé même si machines encore en stock (compteurs `X/X` visibles).
+- **Annuler** : restaure le layout exact d’avant ouverture d’Éditer, ferme le modal.
 - Layout + machines **persistés** dans la save de run.
 
 ### Tactile / mobile
 
+- Grille **2D** (pas iso) dans le modal — plus lisible pour poser / retirer.
 - Chaque case de la grille 10×10 (même vide) doit être **touch-friendly** pour placer / cibler.
-- Drag ou tap-tap selon ce qui est le plus simple en iso ; prioriser des cibles larges.
 - **Zoom** du champ en édition : prévu si les cases sont trop petites — **plus tard** (pas bloquant v1).
 
 ---

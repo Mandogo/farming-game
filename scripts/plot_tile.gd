@@ -2,6 +2,7 @@ class_name PlotTile
 extends Control
 
 signal action_requested(index: int)
+signal fertilizer_pulse(index: int)
 
 const IsoBlockBuilderScript = preload("res://scripts/iso_block_builder.gd")
 const ReadyAuraScript = preload("res://scripts/ready_aura.gd")
@@ -18,6 +19,14 @@ var _textures: Dictionary = {}
 var _plot_cache: Dictionary = {}
 var _progress_cache: float = 0.0
 var _ready_aura: Control
+var _machine_icon: TextureRect
+var _machine_shadow: Control
+var _machine_kind: String = ""
+var _machine_base_pos: Vector2 = Vector2.ZERO
+var _fert_t: float = 0.0
+var _fert_emit_cd: float = 0.0
+var _fert_frame: int = 0
+var _fert_frame_t: float = 0.0
 var _base_modulate: Color = Color.WHITE
 var _ready_pulse: bool = false
 var _soil_key: String = "soil_a"
@@ -73,6 +82,173 @@ func setup(p_index: int, textures: Dictionary) -> void:
 	if hover_hint:
 		hover_hint.visible = false
 	_ensure_ready_aura()
+	_ensure_machine_icon()
+
+
+func _ensure_machine_icon() -> void:
+	if _machine_icon != null and is_instance_valid(_machine_icon):
+		return
+	_machine_shadow = Panel.new()
+	_machine_shadow.name = "MachineShadow"
+	_machine_shadow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_machine_shadow.z_index = 4
+	_machine_shadow.visible = false
+	var sh_st := StyleBoxFlat.new()
+	sh_st.bg_color = Color(0.04, 0.07, 0.03, 0.42)
+	sh_st.set_corner_radius_all(20)
+	sh_st.set_border_width_all(0)
+	_machine_shadow.add_theme_stylebox_override("panel", sh_st)
+	add_child(_machine_shadow)
+
+	_machine_icon = TextureRect.new()
+	_machine_icon.name = "MachineIcon"
+	_machine_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_machine_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_machine_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_machine_icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	_machine_icon.z_index = 6
+	_machine_icon.visible = false
+	add_child(_machine_icon)
+
+
+func _set_fertilizer_fx_visible(on: bool) -> void:
+	if _machine_shadow != null and is_instance_valid(_machine_shadow):
+		_machine_shadow.visible = on
+
+
+func _layout_fertilizer_fx(icon_pos: Vector2, icon_sz: Vector2, bob_y: float = 0.0) -> void:
+	## Ombre au sol — le contour blanc est dans le PNG du drone.
+	if _machine_shadow != null and is_instance_valid(_machine_shadow):
+		var sw := icon_sz.x * 0.72
+		var sh := 10.0
+		_machine_shadow.size = Vector2(sw, sh)
+		var lift := clampf((-bob_y) * 0.15, 0.0, 1.2)
+		_machine_shadow.position = Vector2(
+			icon_pos.x + (icon_sz.x - sw) * 0.5,
+			92.0 + 6.0
+		)
+		_machine_shadow.modulate = Color(1, 1, 1, 0.55 + lift * 0.15)
+		_machine_shadow.scale = Vector2(1.0 + lift * 0.08, 1.0)
+
+
+func _set_machine_visual(machine_id: String) -> void:
+	_ensure_machine_icon()
+	## Évite de resetter bob chaque frame (_update_plot_visuals).
+	if machine_id == _machine_kind and machine_id != "":
+		if _machine_icon.texture == null:
+			if machine_id == "fertilizer":
+				_apply_fertilizer_frame(0)
+				_set_fertilizer_fx_visible(true)
+			else:
+				_machine_icon.texture = _textures.get("ui_auto_planter")
+				_set_fertilizer_fx_visible(false)
+			_machine_icon.visible = _machine_icon.texture != null
+		return
+	_machine_kind = machine_id
+	if machine_id == "":
+		_machine_icon.visible = false
+		_machine_icon.texture = null
+		_machine_icon.rotation = 0.0
+		_machine_icon.scale = Vector2.ONE
+		_machine_icon.modulate = Color.WHITE
+		_set_fertilizer_fx_visible(false)
+		if _shake_t <= 0.0:
+			set_process(false)
+		return
+	var airborne := true
+	if machine_id == "gardener":
+		airborne = false
+		_machine_icon.texture = _textures.get("ui_auto_planter")
+		_set_fertilizer_fx_visible(false)
+	elif machine_id == "fertilizer":
+		airborne = true
+		_fert_frame = 0
+		_fert_frame_t = 0.0
+		_apply_fertilizer_frame(0)
+		_machine_icon.modulate = Color.WHITE
+		_set_fertilizer_fx_visible(true)
+	else:
+		_machine_icon.texture = _textures.get("ui_fertilizer")
+		_set_fertilizer_fx_visible(false)
+	_machine_icon.visible = _machine_icon.texture != null
+	var sz := Vector2(48, 48)
+	_machine_icon.size = sz
+	_machine_icon.pivot_offset = sz * 0.5
+	_machine_icon.rotation = 0.0
+	_machine_icon.scale = Vector2.ONE
+	if airborne:
+		## Un peu plus haut au-dessus du sol pour se détacher du crop/terre.
+		_machine_base_pos = Vector2((size.x - sz.x) * 0.5, 22.0)
+	else:
+		_machine_base_pos = Vector2((size.x - sz.x) * 0.5, 92.0)
+	_machine_icon.position = _machine_base_pos
+	if machine_id == "fertilizer":
+		_layout_fertilizer_fx(_machine_base_pos, sz, 0.0)
+		_fert_emit_cd = GameState.fertilizer_salvo_interval() * randf_range(0.85, 1.0)
+		set_process(true)
+	elif _shake_t <= 0.0:
+		set_process(false)
+
+
+func _apply_fertilizer_frame(frame: int) -> void:
+	## Sprite stable (pas de spin) — frame 0 = vue lisible.
+	_fert_frame = 0
+	var key := "ui_fertilizer_fly_0"
+	if _textures.has(key):
+		_machine_icon.texture = _textures[key]
+	elif _textures.has("ui_fertilizer"):
+		_machine_icon.texture = _textures["ui_fertilizer"]
+
+
+func play_fertilizer_charge_fx() -> void:
+	## Petit flash avant salve.
+	if _machine_icon == null or not is_instance_valid(_machine_icon):
+		return
+	var tw := create_tween()
+	tw.tween_property(_machine_icon, "modulate", Color(1.18, 1.22, 1.12, 1.0), 0.12)
+	tw.tween_property(_machine_icon, "modulate", Color.WHITE, 0.18)
+
+
+func _update_fertilizer_flight(delta: float) -> void:
+	if _machine_kind != "fertilizer" or _machine_icon == null or not _machine_icon.visible:
+		return
+	_fert_t += delta
+	_machine_icon.rotation = 0.0
+	_machine_icon.scale = Vector2.ONE
+	## Uniquement un léger bobbing vertical = « il vole ».
+	var bob_y := sin(_fert_t * 2.4) * 3.5
+	var pos := _machine_base_pos + Vector2(0.0, bob_y)
+	_machine_icon.position = pos
+	_layout_fertilizer_fx(pos, _machine_icon.size, bob_y)
+	_fert_emit_cd -= delta
+	if _fert_emit_cd <= 0.0:
+		_fert_emit_cd = GameState.fertilizer_salvo_interval()
+		_trigger_fertilizer_salvo()
+
+
+func _trigger_fertilizer_salvo() -> void:
+	## Charge visuelle puis salve (lisibilité type idle / tower FX).
+	play_fertilizer_charge_fx()
+	var idx := index
+	get_tree().create_timer(0.22).timeout.connect(func():
+		if is_instance_valid(self) and _machine_kind == "fertilizer":
+			fertilizer_pulse.emit(idx)
+	)
+
+
+func fertilizer_emit_global() -> Vector2:
+	if _machine_icon != null and is_instance_valid(_machine_icon) and _machine_icon.visible:
+		return _machine_icon.get_global_rect().get_center()
+	return get_global_rect().get_center() + Vector2(0, -20)
+
+
+func crop_hit_global() -> Vector2:
+	if crop != null and crop.visible and crop.texture != null:
+		var r := crop.get_global_rect()
+		return r.position + Vector2(r.size.x * 0.5, r.size.y * 0.35)
+	if status != null:
+		return status.get_global_rect().get_center()
+	return get_global_rect().get_center()
 
 
 func _layout_crop(pulse_y: float = 0.0) -> void:
@@ -190,7 +366,10 @@ func _rest_scale() -> Vector2:
 
 
 func _process(delta: float) -> void:
+	_update_fertilizer_flight(delta)
 	if _shake_t <= 0.0:
+		if _machine_kind != "fertilizer":
+			set_process(false)
 		return
 	_shake_t = maxf(0.0, _shake_t - delta)
 	var p := _shake_t / maxf(_shake_dur, 0.001)  # 1 → 0
@@ -251,7 +430,9 @@ func _finish_soil_shake() -> void:
 	if _ready_aura:
 		_ready_aura.position = Vector2(6, 96)
 	set_meta("_soil_shake", false)
-	set_process(false)
+	## Garder process si un fertiliseur vole encore.
+	if _machine_kind != "fertilizer":
+		set_process(false)
 
 
 func _notification(what: int) -> void:
@@ -263,7 +444,7 @@ func _update_hover_hint(_show_hint: bool) -> void:
 		hover_hint.visible = false
 
 
-func refresh(plot: Dictionary, progress: float, pulse_t: float = 0.0) -> void:
+func refresh(plot: Dictionary, progress: float, pulse_t: float = 0.0, show_empty_slots: bool = false) -> void:
 	if soil == null:
 		return
 
@@ -275,19 +456,27 @@ func refresh(plot: Dictionary, progress: float, pulse_t: float = 0.0) -> void:
 		pivot_offset = size * 0.5
 
 	if not plot["unlocked"]:
-		soil.texture = _textures.get(_soil_key)
-		soil.modulate = Color(0.75, 0.76, 0.78, 0.85)
+		if show_empty_slots:
+			## Mode édition : silhouette de case touch-friendly.
+			visible = true
+			soil.texture = _textures.get(_soil_key)
+			soil.modulate = Color(0.55, 0.58, 0.52, 0.45)
+			modulate = Color.WHITE
+		else:
+			## Hors édition : pas de cadrillage fantôme.
+			visible = false
+			soil.texture = null
 		crop.texture = null
 		status.text = ""
-		_base_modulate = Color.WHITE
-		modulate = _base_modulate
 		_ready_pulse = false
 		if _ready_aura:
 			_ready_aura.call("set_active", false)
 		if hover_hint:
 			hover_hint.visible = false
+		_set_machine_visual("")
 		return
 
+	visible = true
 	_base_modulate = Color.WHITE
 	if not bool(get_meta("_soil_shake", false)):
 		modulate = _base_modulate
@@ -296,6 +485,20 @@ func refresh(plot: Dictionary, progress: float, pulse_t: float = 0.0) -> void:
 		soil.modulate = Color.WHITE
 		soil.position = Vector2.ZERO
 		soil.scale = Vector2.ONE
+
+	var mid := str(plot.get("machine", ""))
+	_set_machine_visual(mid)
+
+	if mid == "gardener":
+		crop.texture = null
+		_layout_crop()
+		status.text = ""
+		_ready_pulse = false
+		if _ready_aura:
+			_ready_aura.call("set_active", false)
+		if hover_hint:
+			hover_hint.visible = false
+		return
 
 	if plot["crop"] == null:
 		crop.texture = null
@@ -342,19 +545,19 @@ func refresh(plot: Dictionary, progress: float, pulse_t: float = 0.0) -> void:
 	else:
 		var secs_left := GameState.plot_remaining_seconds(index)
 		status.text = "%d%% (%.0fs)" % [int(progress * 100.0), secs_left]
-		# Rempli blanc ; le contour peut être vert pendant le flash accélération.
-		status.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-		status.modulate = Color.WHITE
-		status.add_theme_font_size_override("font_size", 13)
-		_ensure_bold_status()
+		# Rempli blanc ; le contour / texte peut être vert pendant le flash fertiliseur.
 		if not bool(get_meta("_status_flash", false)):
+			status.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+			status.modulate = Color.WHITE
+			status.add_theme_font_size_override("font_size", 13)
+			_ensure_bold_status()
 			status.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.75))
 			status.add_theme_constant_override("outline_size", 3)
 		_ready_pulse = false
 		if _ready_aura:
 			_ready_aura.call("set_active", false)
 		# Ne pas écraser un flash / secousse de clic en cours
-		if not bool(get_meta("_click_fx", false)) and not bool(get_meta("_soil_shake", false)):
+		if not bool(get_meta("_click_fx", false)) and not bool(get_meta("_soil_shake", false)) and not bool(get_meta("_fert_fx", false)):
 			crop.modulate = Color.WHITE
 		if not bool(get_meta("_soil_shake", false)):
 			_layout_crop()
@@ -411,6 +614,73 @@ func play_click_boost_fx(seconds_gained: float = 0.0, show_float: bool = true) -
 	tw2.tween_property(popup, "global_position", anchor + Vector2(4, -24), 0.45).set_ease(Tween.EASE_OUT)
 	tw2.tween_property(popup, "modulate:a", 0.0, 0.45).set_delay(0.12)
 	tw2.chain().tween_callback(popup.queue_free)
+
+
+func play_fertilizer_boost_fx(seconds_gained: float = 0.0) -> void:
+	## Étoile verte reçue : le chrono passe au vert. Pas de secousse de terre (réservée au clic).
+	_flash_status_fertilizer()
+	if seconds_gained >= 0.05 and status != null:
+		var popup := Label.new()
+		popup.text = "-%.1fs" % seconds_gained
+		popup.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		popup.z_index = 40
+		popup.top_level = true
+		popup.add_theme_font_size_override("font_size", 12)
+		popup.add_theme_color_override("font_color", Color(0.45, 1.0, 0.48, 1.0))
+		popup.add_theme_color_override("font_outline_color", Color(0.05, 0.22, 0.08, 0.95))
+		popup.add_theme_constant_override("outline_size", 3)
+		add_child(popup)
+		var anchor := status.get_global_rect().position + Vector2(4, -6)
+		popup.global_position = anchor
+		var twp := create_tween()
+		twp.set_parallel(true)
+		twp.tween_property(popup, "global_position", anchor + Vector2(0, -20), 0.5).set_ease(Tween.EASE_OUT)
+		twp.tween_property(popup, "modulate:a", 0.0, 0.5).set_delay(0.12)
+		twp.chain().tween_callback(popup.queue_free)
+	if crop == null or crop.texture == null:
+		return
+	if bool(get_meta("_click_fx", false)):
+		return
+	set_meta("_fert_fx", true)
+	if _click_crop_tw != null and is_instance_valid(_click_crop_tw):
+		_click_crop_tw.kill()
+	crop.pivot_offset = crop.size * 0.5
+	_click_crop_tw = create_tween()
+	_click_crop_tw.tween_property(crop, "modulate", Color(0.72, 1.18, 0.70, 1.0), 0.08)
+	_click_crop_tw.tween_property(crop, "modulate", Color.WHITE, 0.22).set_trans(Tween.TRANS_SINE)
+	_click_crop_tw.tween_callback(func():
+		set_meta("_fert_fx", false)
+	)
+
+
+func _flash_status_fertilizer() -> void:
+	## Le texte de temps devient vert (pas seulement le contour).
+	if status == null:
+		return
+	if _status_flash_tw != null and is_instance_valid(_status_flash_tw):
+		_status_flash_tw.kill()
+		_status_flash_tw = null
+	set_meta("_status_flash", true)
+	var green_font := Color(0.32, 0.95, 0.42, 1.0)
+	var green_out := Color(0.12, 0.45, 0.18, 0.95)
+	status.add_theme_color_override("font_color", green_font)
+	status.add_theme_color_override("font_outline_color", green_out)
+	status.add_theme_constant_override("outline_size", 4)
+	_status_flash_tw = create_tween()
+	_status_flash_tw.tween_interval(0.16)
+	_status_flash_tw.tween_method(_lerp_status_fert_colors, 0.0, 1.0, 0.28)
+	_status_flash_tw.tween_callback(_end_status_accel_flash.bind(Color(0, 0, 0, 0.75)))
+
+
+func _lerp_status_fert_colors(t: float) -> void:
+	if not is_instance_valid(status):
+		return
+	var green_font := Color(0.32, 0.95, 0.42, 1.0)
+	var white := Color(1, 1, 1, 1)
+	var green_out := Color(0.12, 0.45, 0.18, 0.95)
+	var back := Color(0, 0, 0, 0.75)
+	status.add_theme_color_override("font_color", green_font.lerp(white, t))
+	status.add_theme_color_override("font_outline_color", green_out.lerp(back, t))
 
 
 func _flash_status_accel() -> void:

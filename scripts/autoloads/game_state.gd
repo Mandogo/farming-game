@@ -47,8 +47,23 @@ const PRESTIGE_POINTS_LATE_BASE := 10  # P10+ : pts pour upgrader les reliques
 const XP_LEVEL_BASE := 200
 const XP_LEVEL_GROWTH := 1.36
 const RELIC_MAX_LEVEL := 5
-const SAVE_PATH := "user://greenhouse_save.json"
-const SAVE_VERSION := 7
+const SAVE_PATH := "user://crop_express_save.json"
+const SAVE_VERSION := 8
+const FERTILIZER_GROW_MULT := 1.5
+const FERTILIZER_BASE_COST := 180
+const FERTILIZER_COST_GROWTH := 1.70
+const FERTILIZER_MAX := 10
+## Salve drone v1 — base : 8 cases autour (Chebyshev r=1) ; skills étendent via fertilizer_range()
+const FERTILIZER_SALVO_INTERVAL := 2.0
+const FERTILIZER_SALVO_SECONDS := 0.5
+const GARDENER_BASE_COST := 260
+const GARDENER_COST_GROWTH := 1.75
+const GARDENER_MAX := 10
+const GARDENER_INTERVAL_BASE := 2.0
+const DELIVERY_COST := 2400
+const DELIVERY_MAX := 1
+const MACHINE_FERTILIZER := "fertilizer"
+const MACHINE_GARDENER := "gardener"
 
 ## Combo livraisons — option A (seuil 4, fenêtre 12 s, boost 25 s ×2, CD ~105 s)
 const COMBO_WINDOW := 12.0
@@ -87,7 +102,13 @@ var prestige_points: int = 0
 var speed_level: int = 0
 var click_level: int = 0
 var yield_level: int = 0
+## Jetons terre possédés (placement libre sur grille 10×10)
 var unlocked_plots: int = START_PLOTS
+var fertilizer_owned: int = 0
+var gardener_owned: int = 0
+var delivery_owned: int = 0
+var _gardener_timer: float = 0.0
+var terrain_edit_seen: bool = false
 
 ## Compétences (arbre XP) — reset au prestige
 var skills_owned: Dictionary = {}
@@ -123,7 +144,7 @@ var tutorial_step: int = TUTORIAL_ACTIVE
 ## Legacy save flag (migré vers tutorial_step)
 var tutorial_grow_seen: bool = false
 
-## Plot: unlocked, crop, grown, ready, auto_plant_id
+## Plot: unlocked (= terre placée), crop, grown, ready, auto_plant_id, machine
 var plots: Array = []
 
 var _boost_costs := {
@@ -146,6 +167,7 @@ const _SKILL_ORDER := [
 	"xp_mission", "xp_curve", "xp_mission_2", "xp_prestige_prep",
 	"order_time", "order_slots", "order_flow", "order_refuse",
 	"money_mission", "money_shop", "money_start", "money_crit",
+	"atelier_gears", "atelier_long_arms", "atelier_wide_tour", "atelier_live_chain", "atelier_network",
 ]
 
 const _SKILL_DEFS := {
@@ -237,6 +259,32 @@ const _SKILL_DEFS := {
 		"title": "Pourboire", "short": "Pourboire",
 		"desc": "Capstone marchand : 10 % chance de doubler l’or d’une livraison.",
 		"cost": 3, "icon": "ui_sparkle", "parent": "money_mission", "branch": "money",
+	},
+	## Atelier — spé Machines
+	"atelier_gears": {
+		"title": "Rouages", "short": "Rouages",
+		"desc": "Spé Machines : coûts d’achat machines −12 %.",
+		"cost": 2, "icon": "ui_auto_planter", "parent": "root_hub", "branch": "atelier",
+	},
+	"atelier_long_arms": {
+		"title": "Bras longs", "short": "Bras",
+		"desc": "Portée des fertiliseurs +1.",
+		"cost": 2, "icon": "ui_fertilizer", "parent": "atelier_gears", "branch": "atelier",
+	},
+	"atelier_wide_tour": {
+		"title": "Tournée large", "short": "Tournée",
+		"desc": "Portée des jardiniers +1.",
+		"cost": 2, "icon": "ui_auto_harvester", "parent": "atelier_gears", "branch": "atelier",
+	},
+	"atelier_live_chain": {
+		"title": "Chaîne vive", "short": "Chaîne",
+		"desc": "Jardiniers : délai de tournée −20 % (2,0 s → 1,6 s).",
+		"cost": 2, "icon": "ui_chrono", "parent": "atelier_gears", "branch": "atelier",
+	},
+	"atelier_network": {
+		"title": "Réseau", "short": "Réseau",
+		"desc": "Capstone Atelier : +1 portée fertiliseurs et jardiniers.",
+		"cost": 3, "icon": "ui_auto_delivery", "parent": "atelier_gears", "branch": "atelier",
 	},
 }
 
@@ -340,6 +388,8 @@ func _notification(what: int) -> void:
 
 func _process(delta: float) -> void:
 	_tick_plots(delta)
+	_tick_gardeners(delta)
+	_tick_auto_delivery()
 	_tick_order_timers(delta)
 	_tick_order_refresh(delta)
 	_tick_combo_boost(delta)
@@ -400,6 +450,10 @@ func _reset_run(from_prestige: bool) -> void:
 	click_level = 0
 	yield_level = 0
 	unlocked_plots = start_plots()
+	fertilizer_owned = 0
+	gardener_owned = 0
+	delivery_owned = 0
+	_gardener_timer = 0.0
 	skills_owned.clear()
 	combo_overflow_gained = 0.0
 	free_refuses_left = 0
@@ -421,6 +475,7 @@ func _reset_run(from_prestige: bool) -> void:
 		"plot": 10,
 	}
 	_build_plots()
+	_place_starting_lands()
 	if from_prestige:
 		toast.emit("Nouveau contrat !")
 	_emit_economy()
@@ -451,8 +506,8 @@ func _emit_economy() -> void:
 
 func _build_plots() -> void:
 	plots.clear()
-	for i in MAX_PLOTS:
-		plots.append(_empty_plot(i < unlocked_plots))
+	for _i in MAX_PLOTS:
+		plots.append(_empty_plot(false))
 
 
 func _empty_plot(unlocked: bool) -> Dictionary:
@@ -462,7 +517,189 @@ func _empty_plot(unlocked: bool) -> Dictionary:
 		"grown": 0.0,
 		"ready": false,
 		"auto_plant_id": &"",
+		"machine": "",
 	}
+
+
+func _place_starting_lands() -> void:
+	## Place les jetons de départ en bas-centre (anneaux Chebyshev).
+	for p in plots:
+		p["unlocked"] = false
+		p["crop"] = null
+		p["grown"] = 0.0
+		p["ready"] = false
+		p["auto_plant_id"] = &""
+		p["machine"] = ""
+	var origin := Vector2i(int(GRID_W / 2), GRID_H - 3)
+	var placed := 0
+	for ring in range(0, 8):
+		for dy in range(-ring, ring + 1):
+			for dx in range(-ring, ring + 1):
+				if maxi(absi(dx), absi(dy)) != ring:
+					continue
+				if placed >= unlocked_plots:
+					return
+				var col := origin.x + dx
+				var row := origin.y + dy
+				var idx := rc_to_index(col, row)
+				if idx < 0:
+					continue
+				plots[idx]["unlocked"] = true
+				placed += 1
+
+
+func land_placed() -> int:
+	var n := 0
+	for p in plots:
+		if p["unlocked"]:
+			n += 1
+	return n
+
+
+func land_unplaced() -> int:
+	return maxi(0, unlocked_plots - land_placed())
+
+
+func is_terrain_edit_unlocked() -> bool:
+	## Bouton Éditer : après le 1er achat de parcelle (au-delà du départ de run).
+	return unlocked_plots > start_plots()
+
+
+func _auto_place_one_land() -> bool:
+	## Place 1 terre adjacente au champ existant (fallback : spirale bas-centre).
+	if land_placed() >= unlocked_plots:
+		return false
+	var candidates: Array[int] = []
+	for i in plots.size():
+		if not plots[i]["unlocked"]:
+			continue
+		for ni in adjacent_indices(i, true):
+			if plots[ni]["unlocked"]:
+				continue
+			if not candidates.has(ni):
+				candidates.append(ni)
+	if not candidates.is_empty():
+		## Préférer la case la plus proche du centroïde du champ (compact).
+		var cx := 0.0
+		var cy := 0.0
+		var n := 0
+		for i in plots.size():
+			if not plots[i]["unlocked"]:
+				continue
+			var rc := index_to_rc(i)
+			cx += float(rc.x)
+			cy += float(rc.y)
+			n += 1
+		if n > 0:
+			cx /= float(n)
+			cy /= float(n)
+		var best := candidates[0]
+		var best_d := 1.0e9
+		for ci in candidates:
+			var rc2 := index_to_rc(ci)
+			var d := absf(float(rc2.x) - cx) + absf(float(rc2.y) - cy)
+			if d < best_d:
+				best_d = d
+				best = ci
+		plots[best]["unlocked"] = true
+		plots[best]["machine"] = ""
+		return true
+	## Aucune adjacence (grille vide) : spirale de départ.
+	var origin := Vector2i(int(GRID_W / 2), GRID_H - 3)
+	for ring in range(0, 12):
+		for dy in range(-ring, ring + 1):
+			for dx in range(-ring, ring + 1):
+				if maxi(absi(dx), absi(dy)) != ring:
+					continue
+				var idx := rc_to_index(origin.x + dx, origin.y + dy)
+				if idx < 0 or plots[idx]["unlocked"]:
+					continue
+				plots[idx]["unlocked"] = true
+				plots[idx]["machine"] = ""
+				return true
+	return false
+
+
+func machine_placed_count(machine_id: String) -> int:
+	var n := 0
+	for p in plots:
+		if str(p.get("machine", "")) == machine_id:
+			n += 1
+	return n
+
+
+func fertilizer_unplaced() -> int:
+	return maxi(0, fertilizer_owned - machine_placed_count(MACHINE_FERTILIZER))
+
+
+func gardener_unplaced() -> int:
+	return maxi(0, gardener_owned - machine_placed_count(MACHINE_GARDENER))
+
+
+func clear_all_crops_memory() -> void:
+	for p in plots:
+		p["crop"] = null
+		p["grown"] = 0.0
+		p["ready"] = false
+		p["auto_plant_id"] = &""
+	plots_changed.emit()
+
+
+func snapshot_terrain_layout() -> Dictionary:
+	var cells: Array = []
+	for i in plots.size():
+		var p: Dictionary = plots[i]
+		cells.append({
+			"unlocked": bool(p["unlocked"]),
+			"machine": str(p.get("machine", "")),
+		})
+	return {
+		"cells": cells,
+		"unlocked_plots": unlocked_plots,
+		"fertilizer_owned": fertilizer_owned,
+		"gardener_owned": gardener_owned,
+		"delivery_owned": delivery_owned,
+	}
+
+
+func apply_terrain_layout(snap: Dictionary) -> void:
+	var cells = snap.get("cells", [])
+	if typeof(cells) != TYPE_ARRAY:
+		return
+	for i in mini(cells.size(), plots.size()):
+		var c: Dictionary = cells[i]
+		var p: Dictionary = plots[i]
+		var has_land := bool(c.get("unlocked", false))
+		p["unlocked"] = has_land
+		var mid := str(c.get("machine", ""))
+		if not has_land:
+			mid = ""
+		if mid != MACHINE_FERTILIZER and mid != MACHINE_GARDENER:
+			mid = ""
+		p["machine"] = mid
+		if not has_land:
+			p["crop"] = null
+			p["grown"] = 0.0
+			p["ready"] = false
+			p["auto_plant_id"] = &""
+		elif mid == MACHINE_GARDENER:
+			## Jardinier occupe la case : pas de culture sous la machine.
+			p["crop"] = null
+			p["grown"] = 0.0
+			p["ready"] = false
+	_gardener_timer = 0.0
+	plots_changed.emit()
+	save_game()
+
+
+func reset_terrain_to_stock() -> Dictionary:
+	## Style CoC : tout au stock, grille vide (jetons / machines conservés en stock).
+	var draft := snapshot_terrain_layout()
+	var cells: Array = []
+	for _i in MAX_PLOTS:
+		cells.append({"unlocked": false, "machine": ""})
+	draft["cells"] = cells
+	return draft
 
 
 func _xp_for_player_level(level: int) -> int:
@@ -773,6 +1010,9 @@ func plant_on_plot(index: int) -> bool:
 	var p: Dictionary = plots[index]
 	if not p["unlocked"] or p["crop"] != null:
 		return false
+	if str(p.get("machine", "")) == MACHINE_GARDENER:
+		toast.emit("Un jardinier occupe cette parcelle.")
+		return false
 	var crop := get_selected_crop()
 	if not is_crop_unlocked(crop):
 		toast.emit("Légume verrouillé.")
@@ -794,25 +1034,66 @@ func plant_on_plot(index: int) -> bool:
 	return true
 
 
-func accelerate_plot(index: int, power_override: float = -1.0) -> bool:
+func accelerate_plot(index: int, power_override: float = -1.0, from_player_click: bool = true, emit_change: bool = true) -> bool:
 	if index < 0 or index >= plots.size():
 		return false
 	var p: Dictionary = plots[index]
 	if not p["unlocked"]:
 		return false
+	if str(p.get("machine", "")) == MACHINE_GARDENER:
+		return false
 	if p["crop"] == null or p["ready"]:
 		return false
 	var power := click_power() if power_override < 0.0 else power_override
-	var need := _plot_need(p)
+	var need := _plot_need(p, index)
 	var was_ready := bool(p["ready"])
 	p["grown"] = minf(need, float(p["grown"]) + power)
 	if p["grown"] >= need:
 		p["ready"] = true
 		if not was_ready:
 			_notify_first_crop_ready()
-	plots_changed.emit()
-	_advance_tutorial_on_click()
+	if emit_change:
+		plots_changed.emit()
+	if from_player_click:
+		_advance_tutorial_on_click()
 	return true
+
+
+func fertilizer_salvo_range() -> int:
+	## Même portée que le passif (skills Bras longs / Réseau).
+	return fertilizer_range()
+
+
+func fertilizer_salvo_interval() -> float:
+	return FERTILIZER_SALVO_INTERVAL
+
+
+func fertilizer_salvo_seconds() -> float:
+	return FERTILIZER_SALVO_SECONDS
+
+
+func fertilizer_salvo_targets(source_index: int) -> Array[int]:
+	## Toutes les terres en pousse dans le rayon Chebyshev (hors ancre machine).
+	var out: Array[int] = []
+	if source_index < 0 or source_index >= plots.size():
+		return out
+	var r := fertilizer_salvo_range()
+	var rc_a := index_to_rc(source_index)
+	for i in plots.size():
+		if i == source_index:
+			continue
+		var p: Dictionary = plots[i]
+		if not bool(p.get("unlocked", false)):
+			continue
+		if str(p.get("machine", "")) == MACHINE_GARDENER:
+			continue
+		if p.get("crop") == null or bool(p.get("ready", false)):
+			continue
+		var rc_b := index_to_rc(i)
+		var d := maxi(absi(rc_a.x - rc_b.x), absi(rc_a.y - rc_b.y))
+		if d > 0 and d <= r:
+			out.append(i)
+	return out
 
 
 func harvest_plot(index: int) -> bool:
@@ -843,22 +1124,18 @@ func harvest_all_ready() -> int:
 
 
 func grid_cols() -> int:
-	return maxi(1, int(ceili(sqrt(float(maxi(1, unlocked_plots))))))
+	return GRID_W
 
 
 func index_to_rc(index: int) -> Vector2i:
-	var cols := grid_cols()
-	return Vector2i(index % cols, int(index / cols))
+	## x = col, y = row
+	return Vector2i(index % GRID_W, int(index / GRID_W))
 
 
 func rc_to_index(col: int, row: int) -> int:
-	var cols := grid_cols()
-	if col < 0 or row < 0 or col >= cols:
+	if col < 0 or row < 0 or col >= GRID_W or row >= GRID_H:
 		return -1
-	var idx := row * cols + col
-	if idx < 0 or idx >= unlocked_plots:
-		return -1
-	return idx
+	return row * GRID_W + col
 
 
 func adjacent_indices(index: int, include_diag: bool = true) -> Array[int]:
@@ -876,19 +1153,112 @@ func adjacent_indices(index: int, include_diag: bool = true) -> Array[int]:
 	return out
 
 
-func try_deliver_order(order_id: String) -> bool:
+func chebyshev_ring_indices(center: int, range_r: int) -> Array[int]:
+	## Anneau Chebyshev centre exclu : 0 < max(|dx|,|dy|) <= R
+	var out: Array[int] = []
+	if range_r <= 0 or center < 0 or center >= plots.size():
+		return out
+	var rc := index_to_rc(center)
+	for dy in range(-range_r, range_r + 1):
+		for dx in range(-range_r, range_r + 1):
+			var d := maxi(absi(dx), absi(dy))
+			if d <= 0 or d > range_r:
+				continue
+			var ni := rc_to_index(rc.x + dx, rc.y + dy)
+			if ni >= 0:
+				out.append(ni)
+	return out
+
+
+func fertilizer_range() -> int:
+	var r := 1
+	if has_skill("atelier_long_arms"):
+		r += 1
+	if has_skill("atelier_network"):
+		r += 1
+	return r
+
+
+func gardener_range() -> int:
+	var r := 1
+	if has_skill("atelier_wide_tour"):
+		r += 1
+	if has_skill("atelier_network"):
+		r += 1
+	return r
+
+
+func gardener_interval() -> float:
+	var t := GARDENER_INTERVAL_BASE
+	if has_skill("atelier_live_chain"):
+		t *= 0.80
+	return t
+
+
+func machine_shop_cost_mult() -> float:
+	var m := shop_cost_mult()
+	if has_skill("atelier_gears"):
+		m *= 0.88
+	return m
+
+
+func fertilizer_cover_mult(index: int) -> float:
+	if index < 0 or index >= plots.size():
+		return 1.0
+	if not plots[index]["unlocked"]:
+		return 1.0
+	var r := fertilizer_range()
+	for i in plots.size():
+		if str(plots[i].get("machine", "")) != MACHINE_FERTILIZER:
+			continue
+		if not plots[i]["unlocked"]:
+			continue
+		var rc_a := index_to_rc(i)
+		var rc_b := index_to_rc(index)
+		var d := maxi(absi(rc_a.x - rc_b.x), absi(rc_a.y - rc_b.y))
+		if d > 0 and d <= r:
+			return FERTILIZER_GROW_MULT
+	return 1.0
+
+
+func range_overlay_flags(index: int) -> Dictionary:
+	## Pour édition : {fertilizer: bool, gardener: bool} si la case terre est couverte.
+	var flags := {"fertilizer": false, "gardener": false}
+	if index < 0 or index >= plots.size() or not plots[index]["unlocked"]:
+		return flags
+	var fr := fertilizer_salvo_range()
+	var gr := gardener_range()
+	for i in plots.size():
+		var mid := str(plots[i].get("machine", ""))
+		if mid == "" or not plots[i]["unlocked"]:
+			continue
+		var rc_a := index_to_rc(i)
+		var rc_b := index_to_rc(index)
+		var d := maxi(absi(rc_a.x - rc_b.x), absi(rc_a.y - rc_b.y))
+		if d <= 0:
+			continue
+		if mid == MACHINE_FERTILIZER and d <= fr:
+			flags["fertilizer"] = true
+		elif mid == MACHINE_GARDENER and d <= gr:
+			flags["gardener"] = true
+	return flags
+
+
+func try_deliver_order(order_id: String, silent: bool = false) -> bool:
 	for m in missions:
 		if m.id != order_id:
 			continue
 		if not m.is_fulfillable(stock):
-			toast.emit("Stock insuffisant pour cette commande.")
+			if not silent:
+				toast.emit("Stock insuffisant pour cette commande.")
 			return false
 		for crop_id in m.requirements:
 			var need: int = int(m.requirements[crop_id])
 			if not remove_stock(crop_id, need):
-				toast.emit("Erreur inventaire.")
+				if not silent:
+					toast.emit("Erreur inventaire.")
 				return false
-		_claim_order(m)
+		_claim_order(m, silent)
 		return true
 	return false
 
@@ -938,7 +1308,7 @@ func _tick_order_refresh(delta: float) -> void:
 		missions_changed.emit()
 
 
-func _claim_order(m: MissionData) -> void:
+func _claim_order(m: MissionData, silent: bool = false) -> void:
 	var money_gain := maxi(1, int(m.coin_reward * mission_money_mult()))
 	var xp_gain := maxi(1, int(m.xp_reward * mission_xp_mult()))
 	var tip := false
@@ -949,10 +1319,11 @@ func _claim_order(m: MissionData) -> void:
 	add_xp(xp_gain)
 	_track_stat("orders", 1)
 	_track_stat("gold_orders", money_gain)
-	var tip_txt := "  ·  Pourboire !" if tip else ""
-	toast.emit("Livre a %s (%s) : +%dor  ·  +%d xp%s" % [
-		m.client_name, m.trait_label(), money_gain, xp_gain, tip_txt
-	])
+	if not silent:
+		var tip_txt := "  ·  Pourboire !" if tip else ""
+		toast.emit("Livre a %s (%s) : +%dor  ·  +%d xp%s" % [
+			m.client_name, m.trait_label(), money_gain, xp_gain, tip_txt
+		])
 	var was_tutorial := is_tutorial_order(m)
 	var remaining: Array[MissionData] = []
 	for o in missions:
@@ -1016,21 +1387,27 @@ func _tick_combo_boost(delta: float) -> void:
 		combo_boost_changed.emit()
 
 
-func _plot_need(p: Dictionary) -> float:
+func _plot_need(p: Dictionary, index: int = -1) -> float:
 	if p["crop"] == null:
 		return 1.0
 	var crop: CropData = p["crop"]
-	return crop.base_grow_time / grow_speed_mult()
+	var speed := grow_speed_mult()
+	if index >= 0:
+		speed *= fertilizer_cover_mult(index)
+	return crop.base_grow_time / maxf(0.01, speed)
 
 
 func _tick_plots(delta: float) -> void:
 	var changed := false
-	for p in plots:
+	for i in plots.size():
+		var p: Dictionary = plots[i]
 		if not p["unlocked"]:
+			continue
+		if str(p.get("machine", "")) == MACHINE_GARDENER:
 			continue
 		if p["crop"] == null or p["ready"]:
 			continue
-		var need: float = _plot_need(p)
+		var need: float = _plot_need(p, i)
 		p["grown"] = minf(need, float(p["grown"]) + delta)
 		if p["grown"] >= need:
 			p["ready"] = true
@@ -1038,6 +1415,76 @@ func _tick_plots(delta: float) -> void:
 			_notify_first_crop_ready()
 	if changed:
 		plots_changed.emit()
+
+
+func _tick_gardeners(delta: float) -> void:
+	if machine_placed_count(MACHINE_GARDENER) <= 0:
+		_gardener_timer = 0.0
+		return
+	_gardener_timer += delta
+	var interval := gardener_interval()
+	var acted := false
+	while _gardener_timer >= interval:
+		_gardener_timer -= interval
+		if _gardener_do_one_action():
+			acted = true
+		else:
+			## Rien à faire — garder un léger surplus pour réagir vite
+			_gardener_timer = minf(_gardener_timer, interval * 0.25)
+			break
+	if acted:
+		plots_changed.emit()
+
+
+func _gardener_do_one_action() -> bool:
+	## 1 récolte+replante sur une terre PRÊTE dans la portée d'un jardinier.
+	var gr := gardener_range()
+	for gi in plots.size():
+		if str(plots[gi].get("machine", "")) != MACHINE_GARDENER:
+			continue
+		if not plots[gi]["unlocked"]:
+			continue
+		for ti in chebyshev_ring_indices(gi, gr):
+			var tp: Dictionary = plots[ti]
+			if not tp["unlocked"] or str(tp.get("machine", "")) == MACHINE_GARDENER:
+				continue
+			if tp["crop"] == null or not tp["ready"]:
+				continue
+			var crop: CropData = tp["crop"]
+			var amount := harvest_amount()
+			add_stock(crop.id, amount)
+			harvested.emit(ti, crop.id, amount)
+			_track_stat("harvested", amount)
+			var replant_id: StringName = tp.get("auto_plant_id", &"")
+			tp["crop"] = null
+			tp["grown"] = 0.0
+			tp["ready"] = false
+			if replant_id != &"":
+				for c in crops:
+					if c.id == replant_id and is_crop_unlocked(c):
+						tp["crop"] = c
+						tp["auto_plant_id"] = c.id
+						break
+			return true
+	return false
+
+
+func _tick_auto_delivery() -> void:
+	if delivery_owned < 1:
+		return
+	var ids: Array[String] = []
+	for m in missions:
+		if m.is_fulfillable(stock):
+			ids.append(m.id)
+	if ids.is_empty():
+		return
+	var n := 0
+	for oid in ids:
+		if try_deliver_order(oid, true):
+			n += 1
+	if n > 0:
+		toast.emit("Livreur auto : %d commande%s livrée%s." % [n, "s" if n > 1 else "", "s" if n > 1 else ""])
+		missions_changed.emit()
 
 
 func plot_remaining_seconds(index: int) -> float:
@@ -1048,7 +1495,7 @@ func plot_remaining_seconds(index: int) -> float:
 		return 0.0
 	if p["ready"]:
 		return 0.0
-	var need := _plot_need(p)
+	var need := _plot_need(p, index)
 	return maxf(0.0, need - float(p["grown"]))
 
 
@@ -1271,13 +1718,16 @@ func _ensure_tutorial_order() -> void:
 
 
 func unlock_next_plot() -> bool:
-	for i in plots.size():
-		if not plots[i]["unlocked"]:
-			plots[i]["unlocked"] = true
-			unlocked_plots += 1
-			plots_changed.emit()
-			return true
-	return false
+	## Achète + place auto une terre (réorga possible via Éditer ensuite).
+	if unlocked_plots >= MAX_PLOTS:
+		return false
+	unlocked_plots += 1
+	if not _auto_place_one_land():
+		## Ne devrait pas arriver si MAX_PLOTS cohérent — rollback soft.
+		unlocked_plots = maxi(start_plots(), unlocked_plots - 1)
+		return false
+	plots_changed.emit()
+	return true
 
 
 func buy_boost(boost_id: String) -> bool:
@@ -1311,14 +1761,83 @@ func buy_boost(boost_id: String) -> bool:
 			if unlocked_plots >= MAX_PLOTS:
 				add_money(cost)
 				return false
+			var first_extra := unlocked_plots <= start_plots()
 			if not unlock_next_plot():
 				add_money(cost)
 				return false
 			_sync_plot_boost_cost()
+			toast.emit("Parcelle placée (%d/%d) — réorganise via Éditer si tu veux." % [land_placed(), unlocked_plots])
+			if first_extra and not terrain_edit_seen:
+				tutorial_nudge.emit(&"terrain_edit")
 		_:
 			add_money(cost)
 			return false
 	boosts_changed.emit()
+	return true
+
+
+func get_machine_cost(machine_id: String) -> int:
+	var base := 0
+	var owned := 0
+	match machine_id:
+		MACHINE_FERTILIZER:
+			owned = fertilizer_owned
+			if owned >= FERTILIZER_MAX:
+				return 0
+			base = int(round(float(FERTILIZER_BASE_COST) * pow(FERTILIZER_COST_GROWTH, float(owned))))
+		MACHINE_GARDENER:
+			owned = gardener_owned
+			if owned >= GARDENER_MAX:
+				return 0
+			base = int(round(float(GARDENER_BASE_COST) * pow(GARDENER_COST_GROWTH, float(owned))))
+		"delivery":
+			if delivery_owned >= DELIVERY_MAX:
+				return 0
+			base = DELIVERY_COST
+		_:
+			return 0
+	return maxi(1, int(ceil(float(base) * machine_shop_cost_mult())))
+
+
+func can_buy_machine(machine_id: String) -> bool:
+	match machine_id:
+		MACHINE_FERTILIZER:
+			return prestige_level >= 1 and fertilizer_owned < FERTILIZER_MAX
+		MACHINE_GARDENER:
+			return prestige_level >= 3 and gardener_owned < GARDENER_MAX
+		"delivery":
+			return prestige_level >= 5 and delivery_owned < DELIVERY_MAX
+		_:
+			return false
+
+
+func buy_machine(machine_id: String) -> bool:
+	if not can_buy_machine(machine_id):
+		toast.emit("Machine verrouillée ou au maximum.")
+		return false
+	var cost := get_machine_cost(machine_id)
+	if cost <= 0 or not spend_money(cost):
+		toast.emit("Pas assez d'argent.")
+		return false
+	match machine_id:
+		MACHINE_FERTILIZER:
+			fertilizer_owned += 1
+			toast.emit("Fertiliseur +1 — place-le via Éditer (%d/%d)" % [
+				machine_placed_count(MACHINE_FERTILIZER), fertilizer_owned
+			])
+		MACHINE_GARDENER:
+			gardener_owned += 1
+			toast.emit("Jardinier +1 — place-le via Éditer (%d/%d)" % [
+				machine_placed_count(MACHINE_GARDENER), gardener_owned
+			])
+		"delivery":
+			delivery_owned += 1
+			toast.emit("Livreur auto acquis — livre dès que le stock suffit.")
+		_:
+			add_money(cost)
+			return false
+	boosts_changed.emit()
+	save_game()
 	return true
 
 
@@ -1699,7 +2218,7 @@ func debug_ready_all_plots() -> void:
 		var p: Dictionary = plots[i]
 		if not p["unlocked"] or p["crop"] == null:
 			continue
-		var need := _plot_need(p)
+		var need := _plot_need(p, i)
 		p["grown"] = need
 		p["ready"] = true
 	plots_changed.emit()
@@ -1710,11 +2229,11 @@ func debug_ready_all_plots() -> void:
 func debug_instant_grow_field() -> void:
 	## Plante (si vide) + mature instantanément toutes les parcelles débloquées.
 	var crop := get_selected_crop()
-	for i in unlocked_plots:
-		if i < 0 or i >= plots.size():
-			continue
+	for i in plots.size():
 		var p: Dictionary = plots[i]
 		if not p["unlocked"]:
+			continue
+		if str(p.get("machine", "")) == MACHINE_GARDENER:
 			continue
 		if p["crop"] == null and crop != null and is_crop_unlocked(crop):
 			p["crop"] = crop
@@ -1722,7 +2241,7 @@ func debug_instant_grow_field() -> void:
 			p["ready"] = false
 			p["auto_plant_id"] = crop.id
 		if p["crop"] != null:
-			var need := _plot_need(p)
+			var need := _plot_need(p, i)
 			p["grown"] = need
 			p["ready"] = true
 	plots_changed.emit()
@@ -2067,7 +2586,7 @@ func plot_progress(index: int) -> float:
 		return 0.0
 	if p["ready"]:
 		return 1.0
-	var need: float = _plot_need(p)
+	var need: float = _plot_need(p, index)
 	if need <= 0.0:
 		return 1.0
 	return clampf(float(p["grown"]) / need, 0.0, 1.0)
@@ -2325,6 +2844,10 @@ func save_game() -> void:
 		"click_level": click_level,
 		"yield_level": yield_level,
 		"unlocked_plots": unlocked_plots,
+		"fertilizer_owned": fertilizer_owned,
+		"gardener_owned": gardener_owned,
+		"delivery_owned": delivery_owned,
+		"terrain_edit_seen": terrain_edit_seen,
 		"skills_owned": skills_owned.duplicate(),
 		"free_refuses_left": free_refuses_left,
 		"combo_overflow_gained": combo_overflow_gained,
@@ -2368,6 +2891,12 @@ func load_game() -> bool:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return false
 	var data: Dictionary = parsed
+	## Pas de migrateur : anciennes saves (grille packing) invalidées.
+	if int(data.get("version", 0)) != SAVE_VERSION:
+		push_warning("Save version mismatch (got %s, need %d) — starting fresh." % [
+			str(data.get("version", "?")), SAVE_VERSION
+		])
+		return false
 	money = int(data.get("money", 40))
 	xp = int(data.get("xp", 0))
 	player_level = int(data.get("player_level", 1))
@@ -2379,6 +2908,10 @@ func load_game() -> bool:
 	click_level = int(data.get("click_level", 0))
 	yield_level = int(data.get("yield_level", 0))
 	unlocked_plots = clampi(int(data.get("unlocked_plots", START_PLOTS)), 1, MAX_PLOTS)
+	fertilizer_owned = clampi(int(data.get("fertilizer_owned", 0)), 0, FERTILIZER_MAX)
+	gardener_owned = clampi(int(data.get("gardener_owned", 0)), 0, GARDENER_MAX)
+	delivery_owned = clampi(int(data.get("delivery_owned", 0)), 0, DELIVERY_MAX)
+	terrain_edit_seen = bool(data.get("terrain_edit_seen", false))
 	skills_owned.clear()
 	var owned = data.get("skills_owned", {})
 	if typeof(owned) == TYPE_DICTIONARY:
@@ -2559,6 +3092,7 @@ func _plots_to_save() -> Array:
 			"grown": float(p["grown"]),
 			"ready": bool(p["ready"]),
 			"auto_plant_id": String(p.get("auto_plant_id", &"")),
+			"machine": str(p.get("machine", "")),
 		})
 	return out
 
@@ -2566,33 +3100,39 @@ func _plots_to_save() -> Array:
 func _plots_from_save(arr) -> void:
 	_build_plots()
 	if typeof(arr) != TYPE_ARRAY:
+		_place_starting_lands()
 		return
 	for i in mini(arr.size(), plots.size()):
 		var s: Dictionary = arr[i]
 		var p: Dictionary = plots[i]
-		# Anciens saves avec sprinkler : ignorer la case occupée
 		if bool(s.get("has_sprinkler", false)):
-			p["unlocked"] = bool(s.get("unlocked", i < unlocked_plots))
+			p["unlocked"] = bool(s.get("unlocked", false))
 			p["crop"] = null
 			p["grown"] = 0.0
 			p["ready"] = false
+			p["machine"] = ""
 			continue
-		p["unlocked"] = bool(s.get("unlocked", i < unlocked_plots))
+		p["unlocked"] = bool(s.get("unlocked", false))
 		p["grown"] = float(s.get("grown", 0.0))
 		p["ready"] = bool(s.get("ready", false))
 		p["auto_plant_id"] = StringName(str(s.get("auto_plant_id", "")))
+		var mid := str(s.get("machine", ""))
+		if mid != MACHINE_FERTILIZER and mid != MACHINE_GARDENER:
+			mid = ""
+		p["machine"] = mid
 		var cid := str(s.get("crop_id", ""))
 		p["crop"] = null
-		if cid != "":
+		if cid != "" and mid != MACHINE_GARDENER:
 			for c in crops:
 				if String(c.id) == cid:
 					p["crop"] = c
 					break
-	var count := 0
-	for p2 in plots:
-		if p2["unlocked"]:
-			count += 1
-	unlocked_plots = maxi(START_PLOTS, count)
+	fertilizer_owned = maxi(fertilizer_owned, machine_placed_count(MACHINE_FERTILIZER))
+	gardener_owned = maxi(gardener_owned, machine_placed_count(MACHINE_GARDENER))
+	var land_count := land_placed()
+	unlocked_plots = maxi(unlocked_plots, maxi(START_PLOTS, land_count))
+	if land_count <= 0:
+		_place_starting_lands()
 
 
 func _missions_to_save() -> Array:

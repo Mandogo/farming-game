@@ -1,4 +1,4 @@
-# Greenhouse Idle
+# Crop Express Idle
 
 Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestige, reliques.
 
@@ -12,10 +12,16 @@ Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestig
 & "..\tools\Godot_v4.4.1-stable_win64.exe" --path .
 ```
 
+## Jouer en ligne
+
+Export Web dans `web_export/` → déploiement auto via GitHub Pages.  
+Guide : [`docs/web-deploy.md`](docs/web-deploy.md) → **https://mandogo.github.io/farming-game/**
+
 ## Docs
 
 | Fichier | Rôle |
 |--------|------|
+| [`docs/web-deploy.md`](docs/web-deploy.md) | Pipeline GitHub Pages + URL du jeu |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | **Roadmap vivante** — coche / ajoute tes idées |
 | [`docs/automation.md`](docs/automation.md) | Spec automatisation + édition terrain |
 | [`assets/textures/TEXTURES.txt`](assets/textures/TEXTURES.txt) | Organisation des textures + scripts utiles |

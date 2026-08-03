@@ -2,6 +2,9 @@
 .godot/
 *.translation
 
+# Artefacts éditeur dans l’export Web (pas servis en ligne)
+web_export/*.import
+
 # Python tools
 tools/__pycache__/
 **/__pycache__/

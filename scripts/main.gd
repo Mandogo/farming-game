@@ -5,6 +5,7 @@ const PrestigeConfirmScript := preload("res://scripts/ui/prestige_confirm.gd")
 const RelicDraftModalScript := preload("res://scripts/ui/relic_draft_modal.gd")
 const DebugCheatPanelScript := preload("res://scripts/ui/debug_cheat_panel.gd")
 const MissionsPanelScript := preload("res://scripts/ui/missions_panel.gd")
+const TerrainEditModalScript := preload("res://scripts/ui/terrain_edit_modal.gd")
 
 const PLOT_SCENE := preload("res://scenes/plot_tile.tscn")
 const UiThemeFactory = preload("res://scripts/ui_theme_factory.gd")
@@ -49,6 +50,9 @@ var _textures: Dictionary = {}
 var _seed_buttons: Array[Control] = []
 var _current_tab: String = "boosts"
 var _shown_unlocked: int = -1
+var _edit_terrain_btn: Button
+var _edit_terrain_badge: Control
+var _active_terrain_modal: Control = null
 var _plot_base_positions: Array[Vector2] = []
 var _rebuilding_ui: bool = false
 var _drag_done: Dictionary = {}
@@ -141,6 +145,7 @@ func _ready() -> void:
 	_setup_player_bar()
 	_setup_combo_boost_chip()
 	_ensure_combo_panel()
+	_setup_edit_terrain_button()
 	field_host.resized.connect(_center_field)
 	field_host.mouse_filter = Control.MOUSE_FILTER_STOP
 	field_host.gui_input.connect(_on_field_host_gui_input)
@@ -484,13 +489,21 @@ func _load_textures() -> void:
 		"tab_shop", "tab_prestige", "combo", "target",
 		"skill_tree", "click_hand", "lock", "settings",
 		"fertilizer", "auto_planter", "auto_harvester", "auto_delivery",
-		"player_avatar", "green_thumb",
+		"player_avatar", "green_thumb", "edit_pen",
 	]
 	for n in ui_keys:
 		var path := "res://assets/textures/ui/%s.png" % n
 		var tex := _load_tex(path)
 		if tex:
 			_textures["ui_%s" % n] = tex
+	## Sprites de vol du fertiliseur (angles distincts — pas une rotation plate).
+	for fi in 4:
+		var fpath := "res://assets/textures/ui/fertilizer_fly_%d.png" % fi
+		var ftex := _load_tex(fpath)
+		if ftex:
+			_textures["ui_fertilizer_fly_%d" % fi] = ftex
+		elif _textures.has("ui_fertilizer"):
+			_textures["ui_fertilizer_fly_%d" % fi] = _textures["ui_fertilizer"]
 	for i in 12:
 		var ctex := _load_tex("res://assets/textures/ui/client_%d.png" % i)
 		if ctex:
@@ -522,6 +535,7 @@ func _assign_ui_textures() -> void:
 	_set_field_background()
 	_set_tex(%MoneyIcon, "ui_coin")
 	_set_tex(%MissionIcon, "ui_mission")
+	_set_tex(%BrandIcon, "ui_logo")
 	var combo_ic := get_node_or_null("%ComboBoostIcon") as TextureRect
 	if combo_ic and _textures.has("ui_shop_speed"):
 		combo_ic.texture = _textures["ui_shop_speed"]
@@ -1703,6 +1717,14 @@ func _on_tutorial_nudge(kind: StringName) -> void:
 				_finger_tutorial.z_index = 90
 			if changed:
 				_show_toast("Tuto — Récupère la récompense de la mission.")
+		&"terrain_edit":
+			_tutorial_mode = &"terrain_edit"
+			_update_edit_terrain_button()
+			_show_finger_tutorial("Éditer", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 95
+			if changed:
+				_show_toast("Tuto — Nouvelle parcelle placée ! Clique Éditer pour réorganiser ton champ.")
 		&"tutorial_done":
 			_tutorial_mode = &""
 			_last_tutorial_nudge = &""
@@ -1891,6 +1913,12 @@ func _snap_finger_to_plot() -> void:
 			anchor = rect.position + rect.size * 0.5
 			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
 			return
+	elif _tutorial_mode == &"terrain_edit":
+		if _edit_terrain_btn != null and is_instance_valid(_edit_terrain_btn) and _edit_terrain_btn.visible:
+			var rect := _edit_terrain_btn.get_global_rect()
+			anchor = rect.position + rect.size * 0.5
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
 
 	if _finger_plot_index >= 0:
 		for tile in _plot_tiles:
@@ -1965,6 +1993,14 @@ func _clear_finger_tutorial() -> void:
 
 
 func _update_finger_tutorial(_delta: float) -> void:
+	## Tuto terrain (post-tuto principal) : garder le doigt sur Éditer.
+	if _tutorial_mode == &"terrain_edit":
+		if _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
+			_show_finger_tutorial("Éditer", "ui_click_hand")
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 95
+		_snap_finger_to_plot()
+		return
 	if GameState.is_tutorial_done():
 		if _finger_tutorial and is_instance_valid(_finger_tutorial):
 			_clear_finger_tutorial()
@@ -2196,10 +2232,13 @@ func _show_tab(id: String) -> void:
 func _on_plots_changed() -> void:
 	if _rebuilding_ui:
 		return
-	if GameState.unlocked_plots != _shown_unlocked:
+	## Grille fixe 10×10 : rebuild seulement si le nombre de tuiles a changé.
+	if _plot_tiles.size() != GameState.MAX_PLOTS:
 		_build_iso_field()
 	else:
 		_update_plot_visuals()
+		call_deferred("_center_field")
+	_update_edit_terrain_button()
 
 
 func _clear_field_host_children() -> void:
@@ -2221,9 +2260,8 @@ func _build_iso_field() -> void:
 	_field_layer = null
 	_field_zoom = 1.0
 
-	var n: int = GameState.unlocked_plots
-	_shown_unlocked = n
-	if n <= 0 or field_host == null:
+	_shown_unlocked = GameState.MAX_PLOTS
+	if field_host == null:
 		return
 
 	field_host.clip_contents = true
@@ -2234,19 +2272,22 @@ func _build_iso_field() -> void:
 	_field_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	field_host.add_child(_field_layer)
 
-	var cols: int = maxi(1, int(ceili(sqrt(float(n)))))
-	for i in n:
-		var col: int = i % cols
-		var row: int = int(i / cols)
-		var tile: PlotTile = PLOT_SCENE.instantiate()
-		_field_layer.add_child(tile)
-		tile.setup(i, _textures)
-		tile.scale = Vector2.ONE
-		var base := Vector2((col - row) * ISO_W, (col + row) * ISO_H)
-		tile.position = base
-		_plot_base_positions.append(base)
-		tile.z_index = col + row
-		_plot_tiles.append(tile)
+	var cols: int = GameState.GRID_W
+	var rows: int = GameState.GRID_H
+	for row in rows:
+		for col in cols:
+			var i: int = row * cols + col
+			var tile: PlotTile = PLOT_SCENE.instantiate()
+			_field_layer.add_child(tile)
+			tile.setup(i, _textures)
+			tile.scale = Vector2.ONE
+			var base := Vector2((col - row) * ISO_W, (col + row) * ISO_H)
+			tile.position = base
+			_plot_base_positions.append(base)
+			tile.z_index = col + row
+			_plot_tiles.append(tile)
+			if not tile.fertilizer_pulse.is_connected(_on_fertilizer_pulse):
+				tile.fertilizer_pulse.connect(_on_fertilizer_pulse)
 
 	# Ordre de dessin seulement — garder _plot_tiles[i] == parcelle i
 	var draw_order: Array[PlotTile] = _plot_tiles.duplicate()
@@ -2256,6 +2297,91 @@ func _build_iso_field() -> void:
 
 	call_deferred("_center_field")
 	call_deferred("_update_plot_visuals")
+	_update_edit_terrain_button()
+
+
+func _setup_edit_terrain_button() -> void:
+	var stack := get_node_or_null("Root/Body/Center/FieldFrame/FieldStack") as Control
+	if stack == null:
+		return
+	if _edit_terrain_btn != null and is_instance_valid(_edit_terrain_btn):
+		_update_edit_terrain_button()
+		return
+	_edit_terrain_btn = Button.new()
+	_edit_terrain_btn.name = "EditTerrainButton"
+	_edit_terrain_btn.text = "Éditer"
+	_edit_terrain_btn.focus_mode = Control.FOCUS_NONE
+	_edit_terrain_btn.custom_minimum_size = Vector2(96, 34)
+	_edit_terrain_btn.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	## Coin haut-droit du champ
+	_edit_terrain_btn.offset_left = -108
+	_edit_terrain_btn.offset_top = 6
+	_edit_terrain_btn.offset_right = -6
+	_edit_terrain_btn.offset_bottom = 40
+	_edit_terrain_btn.z_index = 20
+	_edit_terrain_btn.tooltip_text = "Placer terres et machines"
+	_edit_terrain_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	_edit_terrain_btn.expand_icon = true
+	_edit_terrain_btn.add_theme_constant_override("icon_max_width", 20)
+	_edit_terrain_btn.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_edit_terrain_btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_edit_terrain_btn.pressed.connect(_open_terrain_edit)
+	stack.add_child(_edit_terrain_btn)
+
+	_edit_terrain_badge = Panel.new()
+	_edit_terrain_badge.name = "EditTerrainBadge"
+	_edit_terrain_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_edit_terrain_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_edit_terrain_badge.offset_left = -5
+	_edit_terrain_badge.offset_top = -4
+	_edit_terrain_badge.offset_right = 7
+	_edit_terrain_badge.offset_bottom = 8
+	_edit_terrain_badge.z_index = 2
+	var bst := StyleBoxFlat.new()
+	bst.bg_color = Color(0.92, 0.22, 0.20, 1.0)
+	bst.border_color = Color(1.0, 0.92, 0.90, 0.95)
+	bst.set_border_width_all(1)
+	bst.set_corner_radius_all(8)
+	_edit_terrain_badge.add_theme_stylebox_override("panel", bst)
+	_edit_terrain_badge.visible = false
+	_edit_terrain_btn.add_child(_edit_terrain_badge)
+
+	_update_edit_terrain_button()
+
+
+func _has_unplaced_machines() -> bool:
+	return GameState.fertilizer_unplaced() > 0 or GameState.gardener_unplaced() > 0
+
+
+func _update_edit_terrain_button() -> void:
+	if _edit_terrain_btn == null or not is_instance_valid(_edit_terrain_btn):
+		return
+	_edit_terrain_btn.visible = GameState.is_terrain_edit_unlocked()
+	if _textures.has("ui_edit_pen"):
+		_edit_terrain_btn.icon = _textures["ui_edit_pen"]
+	if _edit_terrain_badge != null and is_instance_valid(_edit_terrain_badge):
+		_edit_terrain_badge.visible = _edit_terrain_btn.visible and _has_unplaced_machines()
+
+
+func _open_terrain_edit() -> void:
+	if not GameState.is_terrain_edit_unlocked():
+		return
+	if _active_terrain_modal != null and is_instance_valid(_active_terrain_modal):
+		return
+	if _tutorial_mode == &"terrain_edit":
+		_tutorial_mode = &""
+		_clear_finger_tutorial()
+	var modal: Control = TerrainEditModalScript.present(self, _textures)
+	_active_terrain_modal = modal
+	if modal.has_signal("closed"):
+		modal.closed.connect(func(_applied: bool):
+			_active_terrain_modal = null
+			_update_plot_visuals()
+			call_deferred("_center_field")
+			_rebuild_side()
+			_update_edit_terrain_button()
+			_clear_finger_tutorial()
+		)
 
 
 func _center_field() -> void:
@@ -2273,10 +2399,15 @@ func _center_field() -> void:
 	var max_x := -INF
 	var min_y := INF
 	var max_y := -INF
+	var any_land := false
 	for i in _plot_tiles.size():
 		var tile: PlotTile = _plot_tiles[i]
 		if not is_instance_valid(tile):
 			continue
+		## Ne cadrer que les terres placées (évite le zoom « grille édition »).
+		if i >= GameState.plots.size() or not bool(GameState.plots[i].get("unlocked", false)):
+			continue
+		any_land = true
 		var pos: Vector2 = _plot_base_positions[i]
 		var sz := tile.size
 		if sz.x < 1.0:
@@ -2288,15 +2419,16 @@ func _center_field() -> void:
 		min_y = minf(min_y, pos.y)
 		max_y = maxf(max_y, pos.y + sz.y)
 
-	if not is_finite(min_x) or not is_finite(max_x):
+	if not any_land or not is_finite(min_x) or not is_finite(max_x):
 		return
 
 	var content_w := maxf(1.0, max_x - min_x)
 	var content_h := maxf(1.0, max_y - min_y)
-	var margin := 0.94
+	## Marge pour 1–peu de parcelles : ne pas trop zoomer non plus.
+	var margin := 0.78 if GameState.land_placed() <= 4 else 0.90
 	var zoom_x := (field_host.size.x * margin) / content_w
 	var zoom_y := (field_host.size.y * margin) / content_h
-	_field_zoom = clampf(minf(zoom_x, zoom_y), 0.22, 1.0)
+	_field_zoom = clampf(minf(zoom_x, zoom_y), 0.35, 1.15)
 
 	## Positions locales à scale 1 (coin haut-gauche du contenu → 0,0)
 	for i in _plot_tiles.size():
@@ -3296,6 +3428,7 @@ func _rebuild_side() -> void:
 			_fill_relics()
 		_:
 			_fill_boosts()
+	_update_edit_terrain_button()
 	call_deferred("_clamp_side_panels")
 
 
@@ -3417,48 +3550,91 @@ func _fill_boosts() -> void:
 
 	var plots_now := GameState.unlocked_plots
 	var pl_maxed := plots_now >= GameState.MAX_PLOTS
-	var pl_sub := "MAX (actuel %d)" % plots_now if pl_maxed else "+1 parcelle (actuel %d)" % plots_now
+	var pl_sub := "MAX (%d)" % plots_now if pl_maxed else "+1 parcelle auto (actuel %d) — Éditer pour réorganiser" % plots_now
 	side_content.add_child(_shop_row(
 		"Nouvelle parcelle",
 		pl_sub,
 		plots_now, GameState.MAX_PLOTS,
 		"MAX" if pl_maxed else str(GameState.get_boost_cost("plot")),
 		(not pl_maxed) and GameState.money >= GameState.get_boost_cost("plot"),
-		func(): GameState.buy_boost("plot"); _rebuild_side(),
+		func(): GameState.buy_boost("plot"); _rebuild_side(); _update_edit_terrain_button(); call_deferred("_center_field"),
 		"ui_shop_plot",
 		not pl_maxed,
 		"plot"
 	))
 
 	side_content.add_child(_shop_section_title("Automatisation", Color(0.38, 0.48, 0.62)))
-	_add_automation_shop_row(
+	_add_machine_shop_row(
 		"Fertiliseur",
-		"Réduit le temps de pousse sur une zone (ex. 3×3).",
+		"Salve d’étoiles / 2 s : −0,5 s de pousse (8 cases autour) — pose via Éditer.",
+		GameState.MACHINE_FERTILIZER,
 		1,
-		"ui_fertilizer"
+		"ui_fertilizer",
+		GameState.fertilizer_owned,
+		GameState.FERTILIZER_MAX
 	)
-	_add_automation_shop_row(
-		"Replanteur",
-		"Replante automatiquement une graine choisie.",
+	_add_machine_shop_row(
+		"Jardinier",
+		"Récolte + replante (2 s) autour — occupe une case.",
+		GameState.MACHINE_GARDENER,
 		3,
-		"ui_auto_planter"
+		"ui_auto_planter",
+		GameState.gardener_owned,
+		GameState.GARDENER_MAX
 	)
-	_add_automation_shop_row(
-		"Récolteuse",
-		"Récolte les cultures prêtes dans sa zone.",
-		6,
-		"ui_auto_harvester"
-	)
-	_add_automation_shop_row(
+	_add_machine_shop_row(
 		"Livreur auto",
-		"Livre les commandes clients automatiquement.",
-		10,
-		"ui_auto_delivery"
+		"Livre toutes les commandes dès que le stock suffit.",
+		"delivery",
+		5,
+		"ui_auto_delivery",
+		GameState.delivery_owned,
+		GameState.DELIVERY_MAX
 	)
+
+
+func _add_machine_shop_row(
+	title: String,
+	desc: String,
+	machine_id: String,
+	prestige_req: int,
+	icon_key: String,
+	owned: int,
+	max_owned: int
+) -> void:
+	var unlocked := GameState.prestige_level >= prestige_req
+	if not unlocked:
+		side_content.add_child(_shop_row(
+			title,
+			"Débloque au Prestige %d" % prestige_req,
+			0, 1,
+			"",
+			false,
+			func(): pass,
+			icon_key,
+			false,
+			"",
+			true
+		))
+		return
+	var maxed := owned >= max_owned
+	var cost := GameState.get_machine_cost(machine_id)
+	var sub := "MAX (%d)" % owned if maxed else "%s · possédés %d/%d" % [desc, owned, max_owned]
+	side_content.add_child(_shop_row(
+		title,
+		sub,
+		owned, max_owned,
+		"MAX" if maxed else str(cost),
+		(not maxed) and GameState.money >= cost and GameState.can_buy_machine(machine_id),
+		func(): GameState.buy_machine(machine_id); _rebuild_side(); _update_edit_terrain_button(),
+		icon_key,
+		not maxed,
+		""
+	))
 
 
 func _add_automation_shop_row(title: String, desc: String, prestige_req: int, icon_key: String) -> void:
-	## Teasers boutique — grisés, cadenas à droite (le prestige est dans la description).
+	## Legacy teaser helper (conservé si appelé ailleurs).
 	var unlocked := GameState.prestige_level >= prestige_req
 	var subtitle := "Débloque au Prestige %d" % prestige_req
 	if unlocked:
@@ -4109,6 +4285,12 @@ func _build_skill_mindmap() -> Control:
 		"money_shop": Vector2(0.36, 0.86),
 		"money_start": Vector2(0.50, 0.92),
 		"money_crit": Vector2(0.64, 0.86),
+		# Bas-gauche — Atelier
+		"atelier_gears": Vector2(0.28, 0.72),
+		"atelier_long_arms": Vector2(0.12, 0.78),
+		"atelier_wide_tour": Vector2(0.18, 0.90),
+		"atelier_live_chain": Vector2(0.30, 0.94),
+		"atelier_network": Vector2(0.40, 0.84),
 	}
 
 	var centers: Dictionary = {}
@@ -4209,6 +4391,8 @@ func _skill_branch_color(branch: String) -> Color:
 			return Color(0.28, 0.72, 0.66, 1.0)
 		"money":
 			return Color(0.88, 0.72, 0.22, 1.0)
+		"atelier":
+			return Color(0.62, 0.55, 0.72, 1.0)
 		_:
 			return Color(0.55, 0.78, 0.48, 1.0)
 
@@ -4668,6 +4852,113 @@ func _play_plot_click_fx(index: int, seconds_gained: float, show_float: bool = t
 		if t.index == index:
 			t.play_click_boost_fx(seconds_gained, show_float)
 			return
+
+
+func _on_fertilizer_pulse(source_index: int) -> void:
+	## Salve : cultures dans la portée (8 cases autour de base, −0,5 s chacune).
+	if source_index < 0 or source_index >= _plot_tiles.size():
+		return
+	if _active_terrain_modal != null and is_instance_valid(_active_terrain_modal):
+		return
+	var src: PlotTile = _plot_tiles[source_index]
+	var targets := GameState.fertilizer_salvo_targets(source_index)
+	if targets.is_empty():
+		return
+	var power := GameState.fertilizer_salvo_seconds()
+	_spawn_fertilizer_salvo_ring(src)
+	var any := false
+	for ti in targets:
+		if GameState.accelerate_plot(ti, power, false, false):
+			any = true
+		_spawn_fertilizer_star(src, _plot_tiles[ti], power)
+	if any:
+		GameState.plots_changed.emit()
+
+
+func _spawn_fertilizer_salvo_ring(from_tile: PlotTile) -> void:
+	## Anneau de particules autour du drone au moment de la salve.
+	var origin := from_tile.fertilizer_emit_global()
+	for i in 12:
+		var star := TextureRect.new()
+		star.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		star.top_level = true
+		star.z_index = 88
+		star.size = Vector2(14, 14)
+		star.custom_minimum_size = star.size
+		star.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		star.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		star.texture = _textures["ui_sparkle"] if _textures.has("ui_sparkle") else _make_green_star_texture()
+		star.modulate = Color(0.4, 1.0, 0.45, 0.95)
+		add_child(star)
+		star.pivot_offset = star.size * 0.5
+		star.global_position = origin - star.size * 0.5
+		var ang := TAU * float(i) / 12.0
+		var dest := origin + Vector2(cos(ang), sin(ang)) * 56.0 - star.size * 0.5
+		var tw := create_tween()
+		tw.set_parallel(true)
+		tw.tween_property(star, "global_position", dest, 0.35).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.tween_property(star, "modulate:a", 0.0, 0.35).set_delay(0.08)
+		tw.tween_property(star, "scale", Vector2(0.4, 0.4), 0.35)
+		tw.chain().tween_callback(star.queue_free)
+
+
+func _spawn_fertilizer_star(from_tile: PlotTile, to_tile: PlotTile, seconds_gained: float = 0.0) -> void:
+	var star := TextureRect.new()
+	star.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	star.top_level = true
+	star.z_index = 90
+	star.custom_minimum_size = Vector2(20, 20)
+	star.size = Vector2(20, 20)
+	star.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	star.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	star.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if _textures.has("ui_sparkle"):
+		star.texture = _textures["ui_sparkle"]
+	else:
+		star.texture = _make_green_star_texture()
+	star.modulate = Color(0.40, 1.0, 0.42, 1.0)
+	add_child(star)
+	var start := from_tile.fertilizer_emit_global() - star.size * 0.5
+	var end := to_tile.crop_hit_global() - star.size * 0.5
+	star.global_position = start
+	star.pivot_offset = star.size * 0.5
+	var mid := (start + end) * 0.5 + Vector2(randf_range(-22.0, 22.0), randf_range(-36.0, -10.0))
+	## Vol un peu plus long pour que la salve reste lisible.
+	var dur := clampf(start.distance_to(end) / 520.0, 0.38, 0.70)
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(star, "rotation", randf_range(-3.2, 3.2), dur)
+	tw.tween_property(star, "scale", Vector2(1.25, 1.25), dur * 0.45).set_trans(Tween.TRANS_SINE)
+	tw.tween_method(_fert_star_bezier.bind(star, start, mid, end), 0.0, 1.0, dur).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tw.chain().tween_callback(func():
+		if is_instance_valid(to_tile):
+			to_tile.play_fertilizer_boost_fx(seconds_gained)
+		if is_instance_valid(star):
+			star.queue_free()
+	)
+
+
+func _fert_star_bezier(star: Control, start: Vector2, mid: Vector2, end: Vector2, t: float) -> void:
+	if not is_instance_valid(star):
+		return
+	var a := start.lerp(mid, t)
+	var b := mid.lerp(end, t)
+	star.global_position = a.lerp(b, t)
+
+
+func _make_green_star_texture() -> Texture2D:
+	var img := Image.create(24, 24, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var c := Vector2(12, 12)
+	for y in 24:
+		for x in 24:
+			var p := Vector2(x + 0.5, y + 0.5) - c
+			var r := p.length()
+			var arm := minf(absf(p.x), absf(p.y))
+			var on := (absf(p.x) < 2.2 and r < 10.5) or (absf(p.y) < 2.2 and r < 10.5) or (arm < 1.6 and r < 7.0)
+			if on:
+				img.set_pixel(x, y, Color(0.35, 0.95, 0.40, 1.0))
+	return ImageTexture.create_from_image(img)
 
 
 func _on_xp(current: int, required: int) -> void:

@@ -3,9 +3,30 @@ description: Style artistique obligatoire pour toute génération d'images du je
 alwaysApply: true
 ---
 
-# Style visuel Greenhouse Idle (génération d'images)
+# Style visuel Crop Express Idle (génération d'images)
 
 Quand l'utilisateur demande de générer / régénérer des assets (cultures, icônes, UI, portraits, etc.), **toujours** utiliser ce style — sauf demande explicite contraire.
+
+## Fond transparent (OBLIGATOIRE — ne jamais sauter)
+
+Le sujet doit flotter seul sur un **canal alpha réel**. C’est la cause n°1 de retours négatifs utilisateur.
+
+### Interdit absolument
+- Fond **blanc**, gris, noir opaque, uni
+- **Damier** « transparence » (gris/blanc) **peint dans l’image** — ce n’est pas de la transparence
+- Carte / pastille / badge / cadre derrière le sujet
+- Exporter / livrer un asset sans avoir **vérifié** les coins du PNG (alpha = 0)
+
+### Prompt de génération — toujours inclure
+`true transparent background`, `alpha channel`, `isolated subject only`, `no background`, `no checkerboard`, `no white backdrop`, `no flat fill behind subject`
+
+### Après chaque génération — pipeline obligatoire avant d’écrire dans `assets/`
+1. Ouvrir / inspecter l’image (outil Read) : si coins non transparents, fond uni ou damier → **ne pas** commit tel quel
+2. Retirer le fond (flood-fill depuis les bords : blanc / gris / damier / noir de studio)
+3. **Ne pas** supprimer un halo blanc volontaire autour du sujet en même temps que le fond : d’abord fond, puis réappliquer le contour blanc silhouette si demandé
+4. Vérifier coins `A=0`, puis seulement copier vers `assets/textures/...`
+
+Référence visuelle OK : `assets/textures/ui/auto_planter.png` (sujet isolé, pas de dalle derrière).
 
 ## Style
 
@@ -13,7 +34,7 @@ Quand l'utilisateur demande de générer / régénérer des assets (cultures, ic
 - **2D casual farm idle** premium : cell-shading, matériaux bois/métal, highlights
 - **Contours sombre épais** et nets
 - Détails travaillés (rivets, grain bois, reflets) — **pas** d’icônes géométriques minimalistes / PIL basiques
-- Lisibles à petite taille ; fond **transparent**
+- Lisibles à petite taille (éviter le surplus de micro-détails sous ~64 px)
 - Pas de réalisme photo, pas de neon / violet rush
 
 ## Culturas / stages de pousse
@@ -23,8 +44,15 @@ Quand l'utilisateur demande de générer / régénérer des assets (cultures, ic
 - Carottes : toujours **plusieurs plants** (3) et **plantées** (pas arrachées)
 - Ancrage bas du sujet = pieds / ligne de sol imaginaire
 
+## Machines animées (ex. drone fertiliseur)
+
+- Préférer **plusieurs sprites** (angles / poses) plutôt qu’une seule image tournée en code
+- Même design entre frames ; seuls l’angle / l’attitude changent
+- Halo blanc = contour de **silhouette** (pas un carré / panneau derrière)
+
 ## À éviter
 
 - Purple glow, neon, 3D render, photo, watercolor
 - Trop de détails fins qui disparaissent en 40–80 px
 - Cartes / pastilles / badges flottants sur le sujet
+- Tout fond opaque ou damier derrière l’asset
