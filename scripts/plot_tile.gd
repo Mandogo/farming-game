@@ -140,7 +140,7 @@ func _set_machine_visual(machine_id: String) -> void:
 				_apply_fertilizer_frame(0)
 				_set_fertilizer_fx_visible(true)
 			else:
-				_machine_icon.texture = _textures.get("ui_auto_planter")
+				_machine_icon.texture = _textures.get("ui_gardener", _textures.get("ui_auto_planter"))
 				_set_fertilizer_fx_visible(false)
 			_machine_icon.visible = _machine_icon.texture != null
 		return
@@ -158,7 +158,7 @@ func _set_machine_visual(machine_id: String) -> void:
 	var airborne := true
 	if machine_id == "gardener":
 		airborne = false
-		_machine_icon.texture = _textures.get("ui_auto_planter")
+		_machine_icon.texture = _textures.get("ui_gardener", _textures.get("ui_auto_planter"))
 		_set_fertilizer_fx_visible(false)
 	elif machine_id == "fertilizer":
 		airborne = true
@@ -172,6 +172,8 @@ func _set_machine_visual(machine_id: String) -> void:
 		_set_fertilizer_fx_visible(false)
 	_machine_icon.visible = _machine_icon.texture != null
 	var sz := Vector2(48, 48)
+	if machine_id == "gardener":
+		sz = Vector2(66, 66)
 	_machine_icon.size = sz
 	_machine_icon.pivot_offset = sz * 0.5
 	_machine_icon.rotation = 0.0
@@ -179,6 +181,13 @@ func _set_machine_visual(machine_id: String) -> void:
 	if airborne:
 		## Un peu plus haut au-dessus du sol pour se détacher du crop/terre.
 		_machine_base_pos = Vector2((size.x - sz.x) * 0.5, 22.0)
+	elif machine_id == "gardener":
+		## Losange de terre, un peu plus haut et à gauche.
+		var dirt := _dirt_center_local()
+		_machine_base_pos = Vector2(
+			dirt.x - sz.x * 0.5 - 6.0,
+			dirt.y - sz.y * 0.72 - 4.0
+		)
 	else:
 		_machine_base_pos = Vector2((size.x - sz.x) * 0.5, 92.0)
 	_machine_icon.position = _machine_base_pos
@@ -188,6 +197,18 @@ func _set_machine_visual(machine_id: String) -> void:
 		set_process(true)
 	elif _shake_t <= 0.0:
 		set_process(false)
+
+
+func _dirt_center_local() -> Vector2:
+	## Centre du losange de terre (même formule que _layout_crop / _has_point).
+	var ch_canvas := float(IsoBlockBuilderScript.CANVAS_H)
+	var top_h := float(IsoBlockBuilderScript.TOP_H)
+	var depth := float(IsoBlockBuilderScript.DEPTH_FALLBACK)
+	var oy := ch_canvas - top_h - depth - 8.0
+	return Vector2(
+		size.x * 0.5,
+		size.y * (oy + top_h * 0.5) / ch_canvas
+	)
 
 
 func _apply_fertilizer_frame(frame: int) -> void:
@@ -242,10 +263,44 @@ func fertilizer_emit_global() -> Vector2:
 	return get_global_rect().get_center() + Vector2(0, -20)
 
 
+func gardener_emit_global() -> Vector2:
+	## Charnière laiton en haut de la tourelle fixe (sortie du bras mobile).
+	if _machine_icon != null and is_instance_valid(_machine_icon) and _machine_icon.visible:
+		var r := _machine_icon.get_global_rect()
+		return r.position + Vector2(r.size.x * 0.50, r.size.y * 0.07)
+	return _dirt_center_local() + get_global_rect().position + Vector2(0, -22)
+
+
+func play_gardener_action_fx() -> void:
+	## Petit pulse sur la machine quand le bras part.
+	if _machine_icon == null or not is_instance_valid(_machine_icon):
+		return
+	var tw := create_tween()
+	tw.tween_property(_machine_icon, "scale", Vector2(1.12, 0.92), 0.08)
+	tw.tween_property(_machine_icon, "scale", Vector2.ONE, 0.14)
+
+
+func play_gardener_harvest_fx() -> void:
+	## Feedback sur la parcelle touchée (récolte + replante).
+	_flash_status_fertilizer()
+	if crop != null and is_instance_valid(crop):
+		if _click_crop_tw != null and is_instance_valid(_click_crop_tw):
+			_click_crop_tw.kill()
+		crop.pivot_offset = crop.size * 0.5
+		_click_crop_tw = create_tween()
+		_click_crop_tw.set_parallel(true)
+		_click_crop_tw.tween_property(crop, "scale", Vector2(1.18, 0.82), 0.07)
+		_click_crop_tw.tween_property(crop, "modulate", Color(1.15, 1.25, 0.85, 1.0), 0.07)
+		_click_crop_tw.chain().set_parallel(true)
+		_click_crop_tw.tween_property(crop, "scale", Vector2.ONE, 0.16)
+		_click_crop_tw.tween_property(crop, "modulate", Color.WHITE, 0.16)
+
+
 func crop_hit_global() -> Vector2:
+	## Vise le bas du plant (pieds / ancrage terre) pour le bras jardinier.
 	if crop != null and crop.visible and crop.texture != null:
 		var r := crop.get_global_rect()
-		return r.position + Vector2(r.size.x * 0.5, r.size.y * 0.35)
+		return r.position + Vector2(r.size.x * 0.5, r.size.y * 0.88)
 	if status != null:
 		return status.get_global_rect().get_center()
 	return get_global_rect().get_center()

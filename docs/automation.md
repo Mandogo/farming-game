@@ -9,7 +9,8 @@ Spec validée (conversation cloud, 2026-08). Source de vérité pour l’implém
 - Gameplay fertiliseur (×1,5), jardinier (2 s), livreur instantané.
 - Branche Atelier (Rouages → 4 nœuds).
 - Save v8 ; prestige reset machines + layout.
-- Assets UI : `fertilizer`, `auto_planter` (jardinier), `auto_delivery` ; `auto_harvester` conservé (icône skill).
+- Assets UI : `fertilizer`, `gardener` (+ alias `auto_planter`), `auto_delivery` ; `auto_harvester` conservé (icône skill).
+- Jardinier v1 : bras animé vers la culture / **2 s** (1 bras) ; multi-bras / vitesse plus tard.
 - Relique `machine_oil` : −3 % coûts boutique / niv (machines incluses via `machine_shop_cost_mult`).
 
 ## Principes communs

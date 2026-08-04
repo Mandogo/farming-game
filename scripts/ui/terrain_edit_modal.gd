@@ -73,7 +73,7 @@ func _build() -> void:
 
 	## ——— En-tête ———
 	var title := Label.new()
-	title.text = "Éditer le terrain"
+	title.text = "Editer le terrain"
 	title.add_theme_font_size_override("font_size", 18)
 	title.add_theme_color_override("font_color", Color(0.22, 0.36, 0.20))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -114,7 +114,7 @@ func _build() -> void:
 	token_wrap.add_child(_token_col)
 	_add_token_chip("land", "Terre", "ui_shop_plot", Color(0.55, 0.42, 0.28))
 	_add_token_chip("fertilizer", "Fertiliseur", "ui_fertilizer", Color(0.28, 0.62, 0.38))
-	_add_token_chip("gardener", "Jardinier", "ui_auto_planter", Color(0.78, 0.62, 0.18))
+	_add_token_chip("gardener", "Jardinier", "ui_gardener", Color(0.78, 0.62, 0.18))
 
 	var field_center := CenterContainer.new()
 	field_center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -167,7 +167,7 @@ func _build() -> void:
 	actions.add_child(reset_btn)
 
 	var cancel := _make_action_btn("Annuler", Color(0.86, 0.52, 0.48, 0.92), Color(0.62, 0.32, 0.30), Vector2(120, 40))
-	cancel.tooltip_text = "Revenir au terrain d’avant Éditer"
+	cancel.tooltip_text = "Revenir au terrain d’avant Editer"
 	cancel.pressed.connect(_on_cancel)
 	actions.add_child(cancel)
 
@@ -572,8 +572,11 @@ func _refresh_cell_visuals() -> void:
 			btn.icon = _textures["ui_fertilizer"]
 			btn.expand_icon = true
 			btn.add_theme_constant_override("icon_max_width", 22)
-		elif mid == GameState.MACHINE_GARDENER and _textures.has("ui_auto_planter"):
-			btn.icon = _textures["ui_auto_planter"]
+		elif mid == GameState.MACHINE_GARDENER:
+			if _textures.has("ui_gardener"):
+				btn.icon = _textures["ui_gardener"]
+			elif _textures.has("ui_auto_planter"):
+				btn.icon = _textures["ui_auto_planter"]
 			btn.expand_icon = true
 			btn.add_theme_constant_override("icon_max_width", 22)
 
@@ -648,7 +651,7 @@ func _on_reset() -> void:
 
 
 func _on_cancel() -> void:
-	## Restaure exactement le layout d’avant ouverture d’Éditer.
+	## Restaure exactement le layout d’avant ouverture d’Editer.
 	GameState.apply_terrain_layout(_snapshot)
 	closed.emit(false)
 	queue_free()

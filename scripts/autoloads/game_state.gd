@@ -12,7 +12,8 @@ signal plots_changed
 signal stock_changed
 signal prestige_ready_changed(ready: bool)
 signal toast(message: String)
-signal harvested(plot_index: int, crop_id: StringName, amount: int)
+signal harvested(plot_index: int, crop_id: StringName, amount: int, via_gardener: bool)
+signal gardener_harvest(source_index: int, target_index: int, crop_id: StringName)
 signal combo_boost_changed
 signal save_completed
 signal tutorial_nudge(kind: StringName)
@@ -60,6 +61,8 @@ const GARDENER_BASE_COST := 260
 const GARDENER_COST_GROWTH := 1.75
 const GARDENER_MAX := 10
 const GARDENER_INTERVAL_BASE := 2.0
+## v1 : 1 bras / tick. Plus tard : multi-bras + vitesse entre récoltes.
+const GARDENER_ARMS_BASE := 1
 const DELIVERY_COST := 2400
 const DELIVERY_MAX := 1
 const MACHINE_FERTILIZER := "fertilizer"
@@ -109,6 +112,9 @@ var gardener_owned: int = 0
 var delivery_owned: int = 0
 var _gardener_timer: float = 0.0
 var terrain_edit_seen: bool = false
+## Cache couverture fertiliseur (rebuild lazy).
+var _fert_cover_dirty: bool = true
+var _fert_cover: PackedFloat32Array = PackedFloat32Array()
 
 ## Compétences (arbre XP) — reset au prestige
 var skills_owned: Dictionary = {}
@@ -264,7 +270,7 @@ const _SKILL_DEFS := {
 	"atelier_gears": {
 		"title": "Rouages", "short": "Rouages",
 		"desc": "Spé Machines : coûts d’achat machines −12 %.",
-		"cost": 2, "icon": "ui_auto_planter", "parent": "root_hub", "branch": "atelier",
+		"cost": 2, "icon": "ui_gardener", "parent": "root_hub", "branch": "atelier",
 	},
 	"atelier_long_arms": {
 		"title": "Bras longs", "short": "Bras",
@@ -688,6 +694,7 @@ func apply_terrain_layout(snap: Dictionary) -> void:
 			p["grown"] = 0.0
 			p["ready"] = false
 	_gardener_timer = 0.0
+	invalidate_fertilizer_cover()
 	plots_changed.emit()
 	save_game()
 
@@ -1105,7 +1112,7 @@ func harvest_plot(index: int) -> bool:
 	var crop: CropData = p["crop"]
 	var amount := harvest_amount()
 	add_stock(crop.id, amount)
-	harvested.emit(index, crop.id, amount)
+	harvested.emit(index, crop.id, amount, false)
 	_track_stat("harvested", amount)
 	p["crop"] = null
 	p["grown"] = 0.0
@@ -1195,6 +1202,11 @@ func gardener_interval() -> float:
 	return t
 
 
+func gardener_arms() -> int:
+	## Nombre d’actions (récolte+replante) par tick. Upgrade multi-bras plus tard.
+	return GARDENER_ARMS_BASE
+
+
 func machine_shop_cost_mult() -> float:
 	var m := shop_cost_mult()
 	if has_skill("atelier_gears"):
@@ -1202,23 +1214,37 @@ func machine_shop_cost_mult() -> float:
 	return m
 
 
+func invalidate_fertilizer_cover() -> void:
+	_fert_cover_dirty = true
+
+
 func fertilizer_cover_mult(index: int) -> float:
 	if index < 0 or index >= plots.size():
 		return 1.0
-	if not plots[index]["unlocked"]:
+	_rebuild_fertilizer_cover_if_needed()
+	if index >= _fert_cover.size():
 		return 1.0
+	return _fert_cover[index]
+
+
+func _rebuild_fertilizer_cover_if_needed() -> void:
+	if not _fert_cover_dirty:
+		return
+	_fert_cover_dirty = false
+	var n := plots.size()
+	_fert_cover.resize(n)
+	for i in n:
+		_fert_cover[i] = 1.0
 	var r := fertilizer_range()
-	for i in plots.size():
+	if r <= 0:
+		return
+	for i in n:
 		if str(plots[i].get("machine", "")) != MACHINE_FERTILIZER:
 			continue
 		if not plots[i]["unlocked"]:
 			continue
-		var rc_a := index_to_rc(i)
-		var rc_b := index_to_rc(index)
-		var d := maxi(absi(rc_a.x - rc_b.x), absi(rc_a.y - rc_b.y))
-		if d > 0 and d <= r:
-			return FERTILIZER_GROW_MULT
-	return 1.0
+		for ti in chebyshev_ring_indices(i, r):
+			_fert_cover[ti] = FERTILIZER_GROW_MULT
 
 
 func range_overlay_flags(index: int) -> Dictionary:
@@ -1426,46 +1452,54 @@ func _tick_gardeners(delta: float) -> void:
 	var acted := false
 	while _gardener_timer >= interval:
 		_gardener_timer -= interval
-		if _gardener_do_one_action():
-			acted = true
-		else:
-			## Rien à faire — garder un léger surplus pour réagir vite
+		var hits := 0
+		## Chaque jardinier place agit independamment (N bras / jardinier).
+		var arms := gardener_arms()
+		for gi in plots.size():
+			if str(plots[gi].get("machine", "")) != MACHINE_GARDENER:
+				continue
+			if not plots[gi]["unlocked"]:
+				continue
+			for _arm in arms:
+				if _gardener_try_action(gi):
+					hits += 1
+					acted = true
+				else:
+					break
+		if hits <= 0:
+			## Rien a faire — garder un leger surplus pour reagir vite
 			_gardener_timer = minf(_gardener_timer, interval * 0.25)
 			break
 	if acted:
 		plots_changed.emit()
 
 
-func _gardener_do_one_action() -> bool:
-	## 1 récolte+replante sur une terre PRÊTE dans la portée d'un jardinier.
+func _gardener_try_action(gi: int) -> bool:
+	## 1 recolte+replante dans la portee de CE jardinier.
 	var gr := gardener_range()
-	for gi in plots.size():
-		if str(plots[gi].get("machine", "")) != MACHINE_GARDENER:
+	for ti in chebyshev_ring_indices(gi, gr):
+		var tp: Dictionary = plots[ti]
+		if not tp["unlocked"] or str(tp.get("machine", "")) == MACHINE_GARDENER:
 			continue
-		if not plots[gi]["unlocked"]:
+		if tp["crop"] == null or not tp["ready"]:
 			continue
-		for ti in chebyshev_ring_indices(gi, gr):
-			var tp: Dictionary = plots[ti]
-			if not tp["unlocked"] or str(tp.get("machine", "")) == MACHINE_GARDENER:
-				continue
-			if tp["crop"] == null or not tp["ready"]:
-				continue
-			var crop: CropData = tp["crop"]
-			var amount := harvest_amount()
-			add_stock(crop.id, amount)
-			harvested.emit(ti, crop.id, amount)
-			_track_stat("harvested", amount)
-			var replant_id: StringName = tp.get("auto_plant_id", &"")
-			tp["crop"] = null
-			tp["grown"] = 0.0
-			tp["ready"] = false
-			if replant_id != &"":
-				for c in crops:
-					if c.id == replant_id and is_crop_unlocked(c):
-						tp["crop"] = c
-						tp["auto_plant_id"] = c.id
-						break
-			return true
+		var crop: CropData = tp["crop"]
+		var amount := harvest_amount()
+		add_stock(crop.id, amount)
+		harvested.emit(ti, crop.id, amount, true)
+		gardener_harvest.emit(gi, ti, crop.id)
+		_track_stat("harvested", amount)
+		var replant_id: StringName = tp.get("auto_plant_id", &"")
+		tp["crop"] = null
+		tp["grown"] = 0.0
+		tp["ready"] = false
+		if replant_id != &"":
+			for c in crops:
+				if c.id == replant_id and is_crop_unlocked(c):
+					tp["crop"] = c
+					tp["auto_plant_id"] = c.id
+					break
+		return true
 	return false
 
 
@@ -1934,6 +1968,7 @@ func buy_skill(skill_id: String) -> bool:
 	skill_points_spent += cost
 	skills_owned[skill_id] = true
 	_apply_skill_purchase(skill_id)
+	invalidate_fertilizer_cover()
 	level_changed.emit(player_level, skill_points)
 	skills_changed.emit()
 	boosts_changed.emit()
@@ -3052,6 +3087,7 @@ func load_game() -> bool:
 	ensure_board_quests(false)
 	if is_tutorial_done():
 		_remove_intro_board_quest()
+	invalidate_fertilizer_cover()
 	_emit_economy()
 	prestige_points_changed.emit(prestige_points)
 	boosts_changed.emit()

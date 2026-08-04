@@ -7,12 +7,13 @@ var _t: float = 0.0
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	set_process(true)
+	set_process(false)
 
 
 func set_active(on: bool) -> void:
 	active = on
 	visible = on
+	set_process(on)
 	if on:
 		queue_redraw()
 
@@ -37,8 +38,8 @@ func _draw() -> void:
 	var base_r := minf(size.x, size.y / squash.y) * 0.42 * breath
 
 	# Glow central doux (plusieurs disques)
-	for i in 5:
-		var t := float(i) / 4.0
+	for i in 4:
+		var t := float(i) / 3.0
 		var r := base_r * (0.35 + t * 0.75)
 		var a := (1.0 - t) * (0.18 + 0.10 * absf(sin(_t * 2.6)))
 		draw_circle(Vector2.ZERO, r, Color(1.0, 0.82, 0.28, a))
@@ -53,9 +54,9 @@ func _draw() -> void:
 	# Contour fixe subtil du plateau
 	_draw_ring(Vector2.ZERO, base_r * 0.92, 1.6, Color(1.0, 0.95, 0.6, 0.28 + 0.12 * absf(sin(_t * 2.6))))
 
-	# Petites poussières lumineuses près des racines (espace local non squashé)
+	# Petites poussieres lumineuses pres des racines
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	for i in 6:
+	for i in 5:
 		var seed := float(i) * 1.7
 		var life := fposmod(_t * 0.7 + seed * 0.37, 1.0)
 		var ang := seed * 2.3 + _t * 0.9
@@ -68,10 +69,10 @@ func _draw() -> void:
 
 
 func _draw_ring(center: Vector2, radius: float, width: float, color: Color) -> void:
-	## Anneau approximé par un arc dense de petits segments.
+	## Anneau approxime par un arc dense de petits segments.
 	if radius <= 0.5:
 		return
-	var steps := 48
+	var steps := 28
 	var pts: PackedVector2Array = PackedVector2Array()
 	for i in steps + 1:
 		var a := TAU * float(i) / float(steps)

@@ -87,7 +87,7 @@ Spec : `docs/automation.md`
 Ajoute ici dès que ça te passe par la tête (pas priorisé).
 
 - [ ] Zoom édition terrain (si cases trop petites)
-- [ ] Feedback VFX sur tournée jardinier / pulse fertiliseur
+- [x] Feedback VFX sur tournée jardinier / pulse fertiliseur
 - [ ] 
 
 ---

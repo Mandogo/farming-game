@@ -40,6 +40,17 @@ html, body {
 	outline: none;
 }
 
+/* Probe invisible pour lire env(safe-area-inset-*) depuis Godot */
+#cei-safe-probe {
+	position: fixed;
+	visibility: hidden;
+	pointer-events: none;
+	padding-left: env(safe-area-inset-left, 0px);
+	padding-right: env(safe-area-inset-right, 0px);
+	padding-top: env(safe-area-inset-top, 0px);
+	padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
 #status, #status-splash, #status-progress {
 	position: absolute;
 	left: 0;
@@ -135,6 +146,7 @@ html, body {
 		$GODOT_HEAD_INCLUDE
 	</head>
 	<body>
+		<div id="cei-safe-probe" aria-hidden="true"></div>
 		<canvas id="canvas">
 			Your browser does not support the canvas tag.
 		</canvas>
@@ -159,6 +171,21 @@ html, body {
 const GODOT_CONFIG = $GODOT_CONFIG;
 const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 const engine = new Engine(GODOT_CONFIG);
+
+/** Insets notch / Dynamic Island (px CSS). 0 sur écrans sans découpe. */
+window.ceiSafeInsets = function () {
+	const probe = document.getElementById('cei-safe-probe');
+	const s = probe ? getComputedStyle(probe) : null;
+	const vv = window.visualViewport;
+	return {
+		l: s ? (parseFloat(s.paddingLeft) || 0) : 0,
+		t: s ? (parseFloat(s.paddingTop) || 0) : 0,
+		r: s ? (parseFloat(s.paddingRight) || 0) : 0,
+		b: s ? (parseFloat(s.paddingBottom) || 0) : 0,
+		w: (vv && vv.width) || window.innerWidth || 1,
+		h: (vv && vv.height) || window.innerHeight || 1,
+	};
+};
 
 (function () {
 	const statusOverlay = document.getElementById('status');
