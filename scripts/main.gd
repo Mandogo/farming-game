@@ -28,6 +28,7 @@ const ISO_H := 26
 @onready var settings_overlay: ColorRect = %SettingsOverlay
 @onready var settings_vbox: VBoxContainer = %SettingsVBox
 @onready var player_level_label: Label = %PlayerLevelLabel
+@onready var player_prestige_label: Label = %PlayerPrestigeLabel
 @onready var player_avatar: TextureRect = %PlayerAvatar
 @onready var sp_label: Label = %SpLabel
 @onready var sp_badge: PanelContainer = %SpBadge
@@ -42,6 +43,9 @@ const ISO_H := 26
 
 var prestige_bar: ProgressBar = null
 var prestige_label: Label = null
+var _prestige_ready_tween: Tween = null
+var _prestige_bar_wrap: Control = null
+var _prestige_pulse_on: bool = false
 
 var _toast_timer: float = 0.0
 var _plot_tiles: Array[PlotTile] = []
@@ -76,6 +80,22 @@ var _active_sell_modal = null
 var _debug_panel = null
 var _field_layer: Control = null
 var _field_zoom: float = 1.0
+## Zoom auto-fit (vue d'ensemble) = plancher ; zoom manuel au-dessus.
+var _field_fit_zoom: float = 1.0
+var _field_content_size: Vector2 = Vector2.ZERO
+var _field_pan: Vector2 = Vector2.ZERO
+var _field_view_ready: bool = false
+var _field_panning: bool = false
+var _field_pan_last: Vector2 = Vector2.ZERO
+var _field_press_pos: Vector2 = Vector2.ZERO
+var _field_press_on_plot: bool = false
+var _field_zoom_in_btn: Button = null
+var _field_zoom_out_btn: Button = null
+var _field_pan_btns: Dictionary = {} ## "left"|"right"|"up"|"down" -> Button
+const FIELD_ZOOM_MAX := 1.35
+const FIELD_ZOOM_STEP := 0.12
+const FIELD_PAN_STEP := 56.0
+const FIELD_PAN_THRESH := 10.0
 var _hovered_plot: PlotTile = null
 var _tutorial_mode: StringName = &""
 var _last_tutorial_nudge: StringName = &""
@@ -166,6 +186,7 @@ func _ready() -> void:
 	_setup_combo_boost_chip()
 	_ensure_combo_panel()
 	_setup_edit_terrain_button()
+	_setup_field_zoom_buttons()
 	field_host.resized.connect(_center_field)
 	field_host.mouse_filter = Control.MOUSE_FILTER_STOP
 	field_host.gui_input.connect(_on_field_host_gui_input)
@@ -303,6 +324,13 @@ func _apply_hard_reset_ui() -> void:
 	_reload_run_ui(true)
 
 
+func _clear_field_fx() -> void:
+	## Coupe les FX flottants (bras jardinier, etc.) avant rebuild prestige.
+	for c in get_children():
+		if c is Control and bool(c.get_meta("field_fx", false)):
+			c.queue_free()
+
+
 func _reload_run_ui(restart_tutorial: bool = false) -> void:
 	## Rebuild UI apr?s prestige / hard reset ? une seule passe, sans d?rive de layout.
 	if _rebuilding_ui:
@@ -311,6 +339,7 @@ func _reload_run_ui(restart_tutorial: bool = false) -> void:
 	_clear_finger_tutorial()
 	_tutorial_mode = &""
 	_last_tutorial_nudge = &""
+	_skill_tree_tuto_active = false
 	_combo_panel_built = false
 	_shown_unlocked = -1
 	_hovered_plot = null
@@ -328,6 +357,7 @@ func _reload_run_ui(restart_tutorial: bool = false) -> void:
 		left.modulate = Color.WHITE
 	_close_settings()
 	_close_skill_tree()
+	_clear_field_fx()
 	_build_iso_field()
 	_build_seed_bar()
 	_ensure_combo_panel()
@@ -523,6 +553,9 @@ func _load_textures() -> void:
 		"skill_tree", "click_hand", "lock", "settings",
 		"fertilizer", "gardener", "gardener_claw", "auto_planter", "auto_harvester", "auto_delivery",
 		"player_avatar", "green_thumb", "edit_pen", "hourglass",
+		"zoom_in", "zoom_out",
+		"pan_up", "pan_down", "pan_left", "pan_right",
+		"level_up",
 	]
 	for n in ui_keys:
 		var path := "res://assets/textures/ui/%s.png" % n
@@ -680,6 +713,9 @@ func _process_field_drag() -> void:
 		or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
 	if not held:
 		_drag_done.clear()
+		_field_panning = false
+		return
+	if _field_panning:
 		return
 	if _is_blocking_ui(get_viewport().gui_get_hovered_control()):
 		return
@@ -696,20 +732,58 @@ func _process_field_drag() -> void:
 
 
 func _on_field_host_gui_input(event: InputEvent) -> void:
-	## Un clic physique = une action (pas d'auto-r?p?tition au maintien).
-	if not (event is InputEventMouseButton):
-		return
-	var mb := event as InputEventMouseButton
-	if mb.button_index != MOUSE_BUTTON_LEFT and mb.button_index != MOUSE_BUTTON_RIGHT:
-		return
-	if not mb.pressed:
-		return
-	var tile := _pick_plot_at_mouse()
-	if tile == null:
-		return
-	_drag_done[tile.index] = true
-	_on_field_action(tile.index, false)
-	field_host.accept_event()
+	## Molette = zoom ; clic molette / glisser vide = pan ; clic parcelle = action.
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			_field_zoom_at(field_host.get_local_mouse_position(), FIELD_ZOOM_STEP)
+			field_host.accept_event()
+			return
+		if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			_field_zoom_at(field_host.get_local_mouse_position(), -FIELD_ZOOM_STEP)
+			field_host.accept_event()
+			return
+		if mb.button_index == MOUSE_BUTTON_MIDDLE:
+			if mb.pressed:
+				_field_panning = true
+				_field_pan_last = field_host.get_local_mouse_position()
+			else:
+				_field_panning = false
+			field_host.accept_event()
+			return
+		if mb.button_index == MOUSE_BUTTON_LEFT or mb.button_index == MOUSE_BUTTON_RIGHT:
+			if mb.pressed:
+				_field_press_pos = field_host.get_local_mouse_position()
+				_field_pan_last = _field_press_pos
+				var tile := _pick_plot_at_mouse()
+				_field_press_on_plot = tile != null
+				_field_panning = false
+				if tile != null:
+					_drag_done[tile.index] = true
+					_on_field_action(tile.index, false)
+					field_host.accept_event()
+			else:
+				_field_panning = false
+			return
+	if event is InputEventMouseMotion:
+		var local := field_host.get_local_mouse_position()
+		if _field_panning:
+			var delta := local - _field_pan_last
+			_field_pan_last = local
+			_field_pan += delta
+			_clamp_field_pan()
+			_apply_field_transform()
+			_update_field_zoom_buttons()
+			field_host.accept_event()
+			return
+		## Pan au clic gauche sur zone vide (apres seuil) quand on est zoome.
+		if Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) \
+				and not _field_press_on_plot \
+				and _field_zoom > _field_fit_zoom + 0.01:
+			if local.distance_to(_field_press_pos) >= FIELD_PAN_THRESH:
+				_field_panning = true
+				_field_pan_last = local
+				field_host.accept_event()
 
 
 func _is_blocking_ui(ctrl: Control) -> bool:
@@ -720,6 +794,10 @@ func _is_blocking_ui(ctrl: Control) -> bool:
 	var n: Node = ctrl
 	while n:
 		if n == %MoneyChip or n == %SettingsButton:
+			return true
+		if n == _field_zoom_in_btn or n == _field_zoom_out_btn:
+			return true
+		if n in _field_pan_btns.values():
 			return true
 		if n == %LeftPanel or n == %RightPanel or n == %SeedPanel or n == %SettingsOverlay or n == %SkillTreeOverlay or n == %PlayerBar:
 			return true
@@ -1116,6 +1194,7 @@ func _ensure_combo_panel() -> void:
 		and host.get_child_count() > 0
 		and is_instance_valid(_combo_reward_l)
 		and is_instance_valid(_combo_cd_row)
+		and bool(_combo_cd_row.get_meta("icon_glued", false))
 		and _combo_segments.size() == need
 	):
 		_refresh_combo_panel()
@@ -1206,6 +1285,7 @@ func _make_combo_panel() -> PanelContainer:
 
 	_combo_cd_row = HBoxContainer.new()
 	_combo_cd_row.visible = false
+	_combo_cd_row.set_meta("icon_glued", true)
 	_combo_cd_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_combo_cd_row.add_theme_constant_override("separation", 6)
 	_combo_cd_row.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1232,9 +1312,16 @@ func _make_combo_panel() -> PanelContainer:
 	cd_inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	cd_wrap.add_child(cd_inner)
 	var cd_top := HBoxContainer.new()
-	cd_top.add_theme_constant_override("separation", 6)
+	cd_top.add_theme_constant_override("separation", 4)
 	cd_top.alignment = BoxContainer.ALIGNMENT_CENTER
+	cd_top.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	cd_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	## Groupe icone+texte colle au centre (pas icone a gauche de toute la barre).
+	var cd_msg := HBoxContainer.new()
+	cd_msg.add_theme_constant_override("separation", 4)
+	cd_msg.alignment = BoxContainer.ALIGNMENT_CENTER
+	cd_msg.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cd_msg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_combo_cd_icon = TextureRect.new()
 	_combo_cd_icon.custom_minimum_size = Vector2(18, 18)
 	_combo_cd_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -1246,15 +1333,16 @@ func _make_combo_panel() -> PanelContainer:
 		_combo_cd_icon.texture = _textures["ui_hourglass"]
 	elif _textures.has("ui_chrono"):
 		_combo_cd_icon.texture = _textures["ui_chrono"]
-	cd_top.add_child(_combo_cd_icon)
+	cd_msg.add_child(_combo_cd_icon)
 	_combo_cd_label = Label.new()
 	_combo_cd_label.add_theme_font_size_override("font_size", 12)
 	_combo_cd_label.modulate = Color(0.95, 0.88, 0.55)
-	_combo_cd_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_combo_cd_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_combo_cd_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_combo_cd_label.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_combo_cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_combo_cd_label.text = "Revient dans  —"
-	cd_top.add_child(_combo_cd_label)
+	cd_msg.add_child(_combo_cd_label)
+	cd_top.add_child(cd_msg)
 	cd_inner.add_child(cd_top)
 	_combo_cd_bar = ProgressBar.new()
 	_combo_cd_bar.custom_minimum_size = Vector2(0, 4)
@@ -1434,6 +1522,14 @@ func _setup_player_bar() -> void:
 	if avatar_block and avatar_frame and player_level_label:
 		avatar_block.move_child(avatar_frame, 0)
 		avatar_block.move_child(player_level_label, 1)
+		if player_prestige_label:
+			avatar_block.move_child(player_prestige_label, 2)
+		## Labels compacts sous l'avatar.
+		player_level_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		player_level_label.add_theme_font_size_override("font_size", 10)
+		if player_prestige_label:
+			player_prestige_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			player_prestige_label.add_theme_font_size_override("font_size", 9)
 	if sp_badge:
 		sp_badge.visible = false
 	# Chip argent du champ ? redondant avec la barre joueur
@@ -1557,16 +1653,18 @@ func _setup_xp_prestige_bars() -> void:
 
 	# Barre prestige rose sous l'XP
 	if xp_block.get_node_or_null("PrestigeBarWrap") != null:
+		_prestige_bar_wrap = xp_block.get_node("PrestigeBarWrap") as Control
 		prestige_bar = xp_block.get_node("PrestigeBarWrap/PrestigeBar") as ProgressBar
 		prestige_label = xp_block.get_node("PrestigeBarWrap/PrestigeLabel") as Label
-		var existing_wrap := xp_block.get_node("PrestigeBarWrap") as Control
-		if existing_wrap:
-			existing_wrap.custom_minimum_size = Vector2(0, 24)
+		if _prestige_bar_wrap:
+			_prestige_bar_wrap.custom_minimum_size = Vector2(0, 24)
 		if prestige_bar:
 			var p_bg2 := StyleBoxFlat.new()
 			p_bg2.bg_color = Color(0.48, 0.28, 0.38, 0.85)
 			p_bg2.set_corner_radius_all(6)
 			prestige_bar.add_theme_stylebox_override("background", p_bg2)
+			if not prestige_bar.gui_input.is_connected(_on_prestige_bar_gui_input):
+				prestige_bar.gui_input.connect(_on_prestige_bar_gui_input)
 		if prestige_label:
 			prestige_label.add_theme_font_size_override("font_size", 11)
 			_style_bar_overlay_label(prestige_label)
@@ -1578,6 +1676,7 @@ func _setup_xp_prestige_bars() -> void:
 	p_wrap.custom_minimum_size = Vector2(0, 24)
 	p_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	xp_block.add_child(p_wrap)
+	_prestige_bar_wrap = p_wrap
 
 	prestige_bar = ProgressBar.new()
 	prestige_bar.name = "PrestigeBar"
@@ -1606,12 +1705,14 @@ func _setup_xp_prestige_bars() -> void:
 	prestige_label.clip_text = true
 	p_wrap.add_child(prestige_label)
 
-	prestige_bar.gui_input.connect(func(ev: InputEvent):
-		if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-			if GameState.can_prestige():
-				_on_prestige()
-	)
+	prestige_bar.gui_input.connect(_on_prestige_bar_gui_input)
 	_refresh_prestige_bar()
+
+
+func _on_prestige_bar_gui_input(ev: InputEvent) -> void:
+	if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+		if GameState.can_prestige():
+			_on_prestige()
 
 
 func _refresh_prestige_bar() -> void:
@@ -1622,18 +1723,52 @@ func _refresh_prestige_bar() -> void:
 	prestige_bar.max_value = float(need)
 	prestige_bar.value = float(mini(GameState.player_level, need))
 	if ready:
-		prestige_label.text = "Prestige ! (+%d)" % GameState.calc_prestige_points_gain()
+		prestige_label.text = "Prestige ! (+%d) — cliquer" % GameState.calc_prestige_points_gain()
 		_style_bar_overlay_label(prestige_label)
 		prestige_bar.tooltip_text = ""
+		prestige_bar.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	else:
 		prestige_label.text = "Prochain prestige : Nv.%d / %d" % [GameState.player_level, need]
 		_style_bar_overlay_label(prestige_label)
 		prestige_bar.tooltip_text = ""
-	# Fill plus vif si pr?t
+		prestige_bar.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	# Fill plus vif si pret
 	var fill := StyleBoxFlat.new()
-	fill.bg_color = Color(0.90, 0.32, 0.58, 1.0) if ready else Color(0.78, 0.28, 0.52, 1.0)
+	fill.bg_color = Color(0.95, 0.38, 0.62, 1.0) if ready else Color(0.78, 0.28, 0.52, 1.0)
 	fill.set_corner_radius_all(5)
 	prestige_bar.add_theme_stylebox_override("fill", fill)
+	_update_prestige_ready_pulse(ready)
+
+
+func _update_prestige_ready_pulse(ready: bool) -> void:
+	var target: Control = _prestige_bar_wrap if _prestige_bar_wrap != null else prestige_bar
+	if target == null or not is_instance_valid(target):
+		return
+	if ready and _prestige_pulse_on and _prestige_ready_tween != null:
+		## Garde le pulse ; met juste a jour le pivot si la barre a change de taille.
+		if target.size.x > 1.0:
+			target.pivot_offset = target.size * 0.5
+		return
+	if _prestige_ready_tween != null:
+		_prestige_ready_tween.kill()
+		_prestige_ready_tween = null
+	target.scale = Vector2.ONE
+	target.modulate = Color.WHITE
+	_prestige_pulse_on = ready
+	if not ready:
+		return
+	## Pulse doux pour signaler que le prestige est cliquable.
+	if target.size.x > 1.0:
+		target.pivot_offset = target.size * 0.5
+	_prestige_ready_tween = create_tween().set_loops()
+	_prestige_ready_tween.tween_property(target, "modulate", Color(1.22, 1.05, 1.12, 1.0), 0.65)\
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_prestige_ready_tween.parallel().tween_property(target, "scale", Vector2(1.02, 1.10), 0.65)\
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_prestige_ready_tween.tween_property(target, "modulate", Color.WHITE, 0.65)\
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_prestige_ready_tween.parallel().tween_property(target, "scale", Vector2.ONE, 0.65)\
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 
 func _bind_currency_icon(node: TextureRect, primary: String, fallback: String) -> void:
@@ -1653,7 +1788,11 @@ func _refresh_currencies() -> void:
 		cur_skill_label.text = "%d pts competences" % GameState.skill_points
 		cur_skill_label.add_theme_color_override("font_color", Color(0.18, 0.38, 0.68))
 	if cur_prestige_label:
-		cur_prestige_label.text = "%d pts prestige" % GameState.prestige_points
+		var pct := GameState.prestige_points_bonus_pct()
+		if pct > 0:
+			cur_prestige_label.text = "%d pts (+%d%%)" % [GameState.prestige_points, pct]
+		else:
+			cur_prestige_label.text = "%d pts prestige" % GameState.prestige_points
 		cur_prestige_label.add_theme_color_override("font_color", Color(0.68, 0.22, 0.45))
 	# Noms int?gr?s dans le label ? masquer les labels annexes
 	var currencies := get_node_or_null("%CurrenciesBlock") as Control
@@ -1841,8 +1980,11 @@ func _refresh_player_hud() -> void:
 	var level := GameState.player_level
 	var sp := GameState.skill_points
 	if player_level_label:
-		player_level_label.text = "Nv.%d" % level
+		player_level_label.text = "Niveau %d" % level
 		player_level_label.add_theme_color_override("font_color", Color(0.22, 0.40, 0.28))
+	if player_prestige_label:
+		player_prestige_label.text = "Prestige %d" % GameState.prestige_level
+		player_prestige_label.add_theme_color_override("font_color", Color(0.58, 0.28, 0.42))
 	_refresh_currencies()
 	_refresh_prestige_bar()
 	if skill_tree_button:
@@ -2102,12 +2244,36 @@ func _on_tutorial_nudge(kind: StringName) -> void:
 				_finger_tutorial.z_index = 120
 			if changed:
 				_show_toast("Tuto - Tu as gagne un niveau ! Ouvre l'arbre de competences.")
+		&"relics_tab":
+			_tutorial_mode = &"relics_tab"
+			_show_finger_tutorial("Reliques", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 95
+			if changed:
+				_show_toast("Tuto - Ouvre l'onglet Reliques (3e menu).")
+		&"relics_explain":
+			_tutorial_mode = &"relics_explain"
+			if _current_tab != "relics":
+				_select_tab("relics")
+			else:
+				_rebuild_side()
+			_show_finger_tutorial("Ameliorer", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 95
+			if changed:
+				var pct := GameState.prestige_points_bonus_pct()
+				_show_toast(
+					"Tes pts prestige donnent +%d%% or et XP. Ameliore ta relique avec ces points." % pct
+				)
 		&"tutorial_done":
 			_tutorial_mode = &""
 			_last_tutorial_nudge = &""
 			_clear_finger_tutorial()
 			_rebuild_stock()
 			_select_tab("boosts")
+		_:
+			_tutorial_mode = &""
+			_clear_finger_tutorial()
 
 
 func _select_tutorial_sell_seed() -> void:
@@ -2302,6 +2468,20 @@ func _snap_finger_to_plot() -> void:
 			anchor = rect.position + rect.size * Vector2(0.35, 0.55)
 			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
 			return
+	elif _tutorial_mode == &"relics_tab":
+		var tab_btn := _find_tut_relics_tab_btn()
+		if tab_btn:
+			var rect := tab_btn.get_global_rect()
+			anchor = rect.position + rect.size * 0.5
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
+	elif _tutorial_mode == &"relics_explain":
+		var relic_row := _find_tut_relic_row()
+		if relic_row:
+			var rect := relic_row.get_global_rect()
+			anchor = rect.position + rect.size * Vector2(0.72, 0.5)
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
 
 	if _finger_plot_index >= 0:
 		for tile in _plot_tiles:
@@ -2356,6 +2536,23 @@ func _find_tut_missions_tab_btn() -> Control:
 	return null
 
 
+func _find_tut_relics_tab_btn() -> Control:
+	if _tab_buttons.has("relics"):
+		var b: Variant = _tab_buttons["relics"]
+		if b is Control and is_instance_valid(b):
+			return b as Control
+	return null
+
+
+func _find_tut_relic_row() -> Control:
+	if side_content == null:
+		return null
+	for n in side_content.find_children("*", "Control", true, false):
+		if n.has_meta("tut_relic_row"):
+			return n as Control
+	return null
+
+
 func _find_tut_claim_btn() -> Control:
 	if side_content == null:
 		return null
@@ -2395,6 +2592,15 @@ func _update_finger_tutorial(_delta: float) -> void:
 			_show_finger_tutorial("Competences", "ui_click_hand")
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 120
+		_snap_finger_to_plot()
+		return
+	## Tuto post-1er prestige : onglet Reliques.
+	if _tutorial_mode == &"relics_tab" or _tutorial_mode == &"relics_explain":
+		if _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
+			var label := "Reliques" if _tutorial_mode == &"relics_tab" else "Ameliorer"
+			_show_finger_tutorial(label, "ui_click_hand")
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 95
 		_snap_finger_to_plot()
 		return
 	if GameState.is_tutorial_done():
@@ -2540,6 +2746,11 @@ func _select_tab(id: String) -> void:
 		b.z_index = 2 if on else 0
 		_style_side_tab_button(b, tid, on)
 	_show_tab(id)
+	if id == "relics" and _tutorial_mode == &"relics_tab":
+		call_deferred("_on_tutorial_nudge", &"relics_explain")
+	elif id == "missions" and _tutorial_mode == &"missions_tab":
+		## Laissé au flux missions existant.
+		pass
 
 
 func _style_side_tab_button(btn: Button, tab_id: String, selected: bool) -> void:
@@ -2658,7 +2869,9 @@ func _build_iso_field() -> void:
 	_hovered_plot = null
 	_drag_done.clear()
 	_field_layer = null
-	_field_zoom = 1.0
+	_field_view_ready = false
+	_field_pan = Vector2.ZERO
+	_field_panning = false
 
 	_shown_unlocked = GameState.MAX_PLOTS
 	if field_host == null:
@@ -2749,6 +2962,163 @@ func _setup_edit_terrain_button() -> void:
 	_update_edit_terrain_button()
 
 
+func _setup_field_zoom_buttons() -> void:
+	## Zoom bas-gauche (pouce gauche) / fleches bas-droite (pouce droit).
+	var stack := get_node_or_null("Root/Body/Center/FieldFrame/FieldStack") as Control
+	if stack == null:
+		return
+	for n in ["FieldZoomButtons", "FieldCameraControls", "FieldZoomCol", "FieldPanPad"]:
+		var old := stack.get_node_or_null(n)
+		if old != null:
+			old.free()
+	_field_zoom_in_btn = null
+	_field_zoom_out_btn = null
+	_field_pan_btns.clear()
+
+	## Zoom tout en bas a gauche : + au-dessus, - en dessous.
+	var zoom_col := VBoxContainer.new()
+	zoom_col.name = "FieldZoomCol"
+	zoom_col.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	zoom_col.grow_horizontal = Control.GROW_DIRECTION_END
+	zoom_col.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	zoom_col.offset_left = 6
+	zoom_col.offset_top = -88
+	zoom_col.offset_right = 46
+	zoom_col.offset_bottom = -6
+	zoom_col.add_theme_constant_override("separation", 2)
+	zoom_col.z_index = 20
+	stack.add_child(zoom_col)
+
+	_field_zoom_in_btn = _make_field_icon_button("FieldZoomIn", "ui_zoom_in", 38)
+	_field_zoom_in_btn.pressed.connect(_on_field_zoom_pressed.bind(FIELD_ZOOM_STEP))
+	_field_zoom_out_btn = _make_field_icon_button("FieldZoomOut", "ui_zoom_out", 38)
+	_field_zoom_out_btn.pressed.connect(_on_field_zoom_pressed.bind(-FIELD_ZOOM_STEP))
+	zoom_col.add_child(_field_zoom_in_btn)
+	zoom_col.add_child(_field_zoom_out_btn)
+
+	## Pave directionnel serre, tout en bas a droite.
+	var pad := GridContainer.new()
+	pad.name = "FieldPanPad"
+	pad.columns = 3
+	pad.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	pad.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	pad.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	pad.offset_left = -118
+	pad.offset_top = -118
+	pad.offset_right = -6
+	pad.offset_bottom = -6
+	pad.add_theme_constant_override("h_separation", -4)
+	pad.add_theme_constant_override("v_separation", -4)
+	pad.z_index = 20
+	stack.add_child(pad)
+
+	_field_pan_btns.clear()
+	var pan_slots := [
+		["", Vector2.ZERO],
+		["up", Vector2(0, 1)],
+		["", Vector2.ZERO],
+		["left", Vector2(1, 0)],
+		["", Vector2.ZERO],
+		["right", Vector2(-1, 0)],
+		["", Vector2.ZERO],
+		["down", Vector2(0, -1)],
+		["", Vector2.ZERO],
+	]
+	## Fleche = direction de la vue (contenu se decale a l'inverse).
+	const PAN_BTN := 38
+	for slot in pan_slots:
+		var dir_name: String = slot[0]
+		if dir_name.is_empty():
+			var spacer := Control.new()
+			spacer.custom_minimum_size = Vector2(PAN_BTN, PAN_BTN)
+			spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pad.add_child(spacer)
+			continue
+		var delta: Vector2 = slot[1]
+		var btn := _make_field_icon_button(
+			"FieldPan_%s" % dir_name,
+			"ui_pan_%s" % dir_name,
+			PAN_BTN
+		)
+		btn.pressed.connect(_on_field_pan_pressed.bind(delta))
+		_field_pan_btns[dir_name] = btn
+		pad.add_child(btn)
+
+	_update_field_zoom_buttons()
+
+
+func _make_field_icon_button(btn_name: String, tex_key: String, size_px: int = 46) -> Button:
+	var btn := Button.new()
+	btn.name = btn_name
+	btn.text = ""
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.custom_minimum_size = Vector2(size_px, size_px)
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	btn.flat = true
+	## Icone bois seule (comme parametres) : pas de chrome bouton.
+	var empty := StyleBoxEmpty.new()
+	for st in ["normal", "hover", "pressed", "disabled", "focus"]:
+		btn.add_theme_stylebox_override(st, empty)
+	btn.expand_icon = true
+	btn.add_theme_constant_override("icon_max_width", size_px - 2)
+	btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	btn.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _textures.has(tex_key):
+		btn.icon = _textures[tex_key]
+	return btn
+
+
+func _on_field_zoom_pressed(step: float) -> void:
+	var anchor := field_host.size * 0.5 if field_host else Vector2.ZERO
+	_field_zoom_at(anchor, step)
+
+
+func _on_field_pan_pressed(dir: Vector2) -> void:
+	if _field_zoom <= _field_fit_zoom + 0.01:
+		return
+	_field_pan += dir * FIELD_PAN_STEP
+	_clamp_field_pan()
+	_apply_field_transform()
+	_update_field_zoom_buttons()
+
+
+func _update_field_zoom_buttons() -> void:
+	if _field_zoom_out_btn != null and is_instance_valid(_field_zoom_out_btn):
+		_field_zoom_out_btn.disabled = _field_zoom <= _field_fit_zoom + 0.005
+		_field_zoom_out_btn.modulate = Color(1, 1, 1, 0.45) if _field_zoom_out_btn.disabled else Color.WHITE
+	if _field_zoom_in_btn != null and is_instance_valid(_field_zoom_in_btn):
+		_field_zoom_in_btn.disabled = _field_zoom >= FIELD_ZOOM_MAX - 0.005
+		_field_zoom_in_btn.modulate = Color(1, 1, 1, 0.45) if _field_zoom_in_btn.disabled else Color.WHITE
+
+	## Limites de pan : desactive la fleche si plus de marge de ce cote.
+	var can_pan := _field_zoom > _field_fit_zoom + 0.01
+	var max_pan := _field_max_pan()
+	var limits := {
+		"left": can_pan and _field_pan.x < max_pan.x - 0.5,
+		"right": can_pan and _field_pan.x > -max_pan.x + 0.5,
+		"up": can_pan and _field_pan.y < max_pan.y - 0.5,
+		"down": can_pan and _field_pan.y > -max_pan.y + 0.5,
+	}
+	for dir_name in _field_pan_btns.keys():
+		var btn: Button = _field_pan_btns[dir_name]
+		if btn == null or not is_instance_valid(btn):
+			continue
+		var ok: bool = limits.get(dir_name, false)
+		btn.disabled = not ok
+		btn.modulate = Color(1, 1, 1, 0.45) if btn.disabled else Color.WHITE
+
+
+func _field_max_pan() -> Vector2:
+	if field_host == null:
+		return Vector2.ZERO
+	var scaled := _field_content_size * _field_zoom
+	var host := field_host.size
+	return Vector2(
+		maxf(0.0, (scaled.x - host.x) * 0.5),
+		maxf(0.0, (scaled.y - host.y) * 0.5)
+	)
+
+
 func _has_unplaced_machines() -> bool:
 	return GameState.fertilizer_unplaced() > 0 or GameState.gardener_unplaced() > 0
 
@@ -2785,7 +3155,7 @@ func _open_terrain_edit() -> void:
 
 
 func _center_field() -> void:
-	## Centre + d?zoom progressif pour faire rentrer jusqu?? 10?10 dans FieldHost.
+	## Auto-fit = zoom minimum (vue d'ensemble). Conserve zoom/pan manuel sinon.
 	if _plot_tiles.is_empty() or field_host == null or _field_layer == null:
 		return
 	if not is_instance_valid(_field_layer):
@@ -2828,7 +3198,11 @@ func _center_field() -> void:
 	var margin := 0.78 if GameState.land_placed() <= 4 else 0.90
 	var zoom_x := (field_host.size.x * margin) / content_w
 	var zoom_y := (field_host.size.y * margin) / content_h
-	_field_zoom = clampf(minf(zoom_x, zoom_y), 0.35, 1.15)
+	var fit := clampf(minf(zoom_x, zoom_y), 0.35, 1.15)
+	var was_at_fit := (not _field_view_ready) or is_equal_approx(_field_zoom, _field_fit_zoom) \
+			or _field_zoom <= _field_fit_zoom + 0.02
+	_field_fit_zoom = fit
+	_field_content_size = Vector2(content_w, content_h)
 	_last_centered_land = GameState.land_placed()
 
 	## Positions locales scale 1 (coin haut-gauche du contenu 0,0)
@@ -2841,10 +3215,65 @@ func _center_field() -> void:
 		tile.scale = Vector2.ONE
 		tile.position = _plot_base_positions[i] - Vector2(min_x, min_y)
 
+	if not _field_view_ready or was_at_fit:
+		_field_zoom = _field_fit_zoom
+		_field_pan = Vector2.ZERO
+	else:
+		_field_zoom = clampf(_field_zoom, _field_fit_zoom, maxf(FIELD_ZOOM_MAX, _field_fit_zoom))
+	_field_view_ready = true
+	_clamp_field_pan()
+	_apply_field_transform()
+	_update_field_zoom_buttons()
+
+
+func _field_centered_pos() -> Vector2:
+	return (field_host.size - _field_content_size * _field_zoom) * 0.5
+
+
+func _clamp_field_pan() -> void:
+	if field_host == null:
+		_field_pan = Vector2.ZERO
+		return
+	var scaled := _field_content_size * _field_zoom
+	var host := field_host.size
+	if scaled.x <= host.x + 0.5:
+		_field_pan.x = 0.0
+	else:
+		var max_x := (scaled.x - host.x) * 0.5
+		_field_pan.x = clampf(_field_pan.x, -max_x, max_x)
+	if scaled.y <= host.y + 0.5:
+		_field_pan.y = 0.0
+	else:
+		var max_y := (scaled.y - host.y) * 0.5
+		_field_pan.y = clampf(_field_pan.y, -max_y, max_y)
+
+
+func _apply_field_transform() -> void:
+	if _field_layer == null or not is_instance_valid(_field_layer) or field_host == null:
+		return
 	_field_layer.scale = Vector2(_field_zoom, _field_zoom)
-	var scaled_w := content_w * _field_zoom
-	var scaled_h := content_h * _field_zoom
-	_field_layer.position = (field_host.size - Vector2(scaled_w, scaled_h)) * 0.5
+	_field_layer.position = _field_centered_pos() + _field_pan
+
+
+func _field_zoom_at(anchor: Vector2, delta: float) -> void:
+	if field_host == null or _field_content_size == Vector2.ZERO:
+		return
+	var old_z := _field_zoom
+	var new_z := clampf(old_z + delta, _field_fit_zoom, maxf(FIELD_ZOOM_MAX, _field_fit_zoom))
+	if is_equal_approx(old_z, new_z):
+		_update_field_zoom_buttons()
+		return
+	## Garde le point sous l'ancre stable pendant le zoom.
+	var old_center := (field_host.size - _field_content_size * old_z) * 0.5
+	var local := (anchor - (old_center + _field_pan)) / maxf(old_z, 0.001)
+	_field_zoom = new_z
+	var new_center := (field_host.size - _field_content_size * new_z) * 0.5
+	_field_pan = anchor - new_center - local * new_z
+	if _field_zoom <= _field_fit_zoom + 0.005:
+		_field_pan = Vector2.ZERO
+	_clamp_field_pan()
+	_apply_field_transform()
+	_update_field_zoom_buttons()
 
 
 func _build_seed_bar() -> void:
@@ -2861,6 +3290,9 @@ func _build_seed_bar() -> void:
 	const CHIP_H := 124.0
 	const STOCK_H := 30.0
 	const CORNER := 12
+	const BORDER := 2
+	## Coins internes du bandeau (la bordure card reste visible tout autour).
+	const INNER_CORNER := CORNER - BORDER
 
 	seed_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	seed_row.alignment = BoxContainer.ALIGNMENT_BEGIN
@@ -2882,11 +3314,10 @@ func _build_seed_bar() -> void:
 		chip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if unlocked else Control.CURSOR_ARROW
 		if seed_style:
 			var st := seed_style.duplicate() as StyleBoxFlat
-			## Marges nulles en bas / cotes pour coller le bandeau stock aux bords arrondis.
-			st.content_margin_left = 0
-			st.content_margin_right = 0
-			st.content_margin_top = 4
-			st.content_margin_bottom = 0
+			## Marges = epaisseur bordure : le contour englobe aussi le bandeau stock.
+			_apply_seed_card_shell_margins(st, BORDER)
+			st.set_border_width_all(BORDER)
+			st.set_corner_radius_all(CORNER)
 			st.shadow_size = 0
 			st.shadow_color = Color(0, 0, 0, 0)
 			st.anti_aliasing = true
@@ -3003,7 +3434,7 @@ func _build_seed_bar() -> void:
 			stock_btn.add_theme_color_override("font_hover_color", Color(0.28, 0.18, 0.04))
 			stock_btn.add_theme_color_override("font_pressed_color", Color(0.22, 0.14, 0.02))
 			stock_btn.add_theme_color_override("font_disabled_color", Color(0.48, 0.50, 0.46))
-			_apply_seed_stock_strip_styles(stock_btn, CORNER, true)
+			_apply_seed_stock_strip_styles(stock_btn, INNER_CORNER, true)
 			var sell_id: StringName = crop.id
 			stock_btn.pressed.connect(func(): _open_sell_modal(sell_id))
 			root.add_child(stock_btn)
@@ -3031,8 +3462,8 @@ func _build_seed_bar() -> void:
 			hint_st.border_width_top = 1
 			hint_st.corner_radius_top_left = 0
 			hint_st.corner_radius_top_right = 0
-			hint_st.corner_radius_bottom_left = CORNER
-			hint_st.corner_radius_bottom_right = CORNER
+			hint_st.corner_radius_bottom_left = INNER_CORNER
+			hint_st.corner_radius_bottom_right = INNER_CORNER
 			hint_st.content_margin_left = 4
 			hint_st.content_margin_right = 4
 			hint_st.anti_aliasing = true
@@ -3077,10 +3508,9 @@ func _build_seed_bar() -> void:
 				var locked_st := seed_style.duplicate() as StyleBoxFlat
 				locked_st.bg_color = Color(0.58, 0.60, 0.62, 0.92)
 				locked_st.border_color = Color(0.40, 0.42, 0.44, 0.70)
-				locked_st.content_margin_left = 0
-				locked_st.content_margin_right = 0
-				locked_st.content_margin_top = 4
-				locked_st.content_margin_bottom = 0
+				_apply_seed_card_shell_margins(locked_st, BORDER)
+				locked_st.set_border_width_all(BORDER)
+				locked_st.set_corner_radius_all(CORNER)
 				locked_st.shadow_size = 0
 				locked_st.shadow_color = Color(0, 0, 0, 0)
 				locked_st.anti_aliasing = true
@@ -3109,19 +3539,27 @@ func _build_seed_bar() -> void:
 	_rebuild_stock()
 
 
+func _apply_seed_card_shell_margins(st: StyleBoxFlat, border: int) -> void:
+	## Laisse la bordure visible tout autour (y compris sous le bandeau stock).
+	st.content_margin_left = border
+	st.content_margin_right = border
+	st.content_margin_top = 4
+	st.content_margin_bottom = border
+
+
 func _apply_seed_stock_strip_styles(btn: Button, corner: int, enabled_look: bool) -> void:
-	## Bandeau bas de card : coins bas arrondis comme la SeedCard, haut droit.
+	## Bandeau bas interne : coins bas legerement plus petits que la card (bordure visible).
 	var sn := StyleBoxFlat.new()
 	sn.bg_color = Color(0.90, 0.82, 0.52, 0.95) if enabled_look else Color(0.78, 0.80, 0.76, 0.75)
-	sn.border_color = Color(0.72, 0.55, 0.18, 0.70) if enabled_look else Color(0.55, 0.58, 0.52, 0.40)
+	sn.border_color = Color(0.72, 0.55, 0.18, 0.55) if enabled_look else Color(0.55, 0.58, 0.52, 0.40)
 	sn.border_width_top = 1
 	sn.border_width_left = 0
 	sn.border_width_right = 0
 	sn.border_width_bottom = 0
 	sn.corner_radius_top_left = 0
 	sn.corner_radius_top_right = 0
-	sn.corner_radius_bottom_left = corner
-	sn.corner_radius_bottom_right = corner
+	sn.corner_radius_bottom_left = maxi(0, corner)
+	sn.corner_radius_bottom_right = maxi(0, corner)
 	sn.content_margin_left = 4
 	sn.content_margin_right = 4
 	sn.content_margin_top = 4
@@ -3211,19 +3649,19 @@ func _on_seed_picked(i: int) -> void:
 			chip.modulate = Color(0.55, 0.55, 0.58, 0.72)
 		if seed_style:
 			var st := seed_style.duplicate() as StyleBoxFlat
-			st.content_margin_left = 0
-			st.content_margin_right = 0
-			st.content_margin_top = 4
-			st.content_margin_bottom = 0
+			_apply_seed_card_shell_margins(st, 2)
 			st.shadow_size = 0
 			st.shadow_color = Color(0, 0, 0, 0)
 			st.anti_aliasing = true
 			if selected:
 				st.border_color = Color(0.82, 0.68, 0.28, 0.95)
 				st.set_border_width_all(2)
+				st.set_corner_radius_all(12)
 			else:
 				st.bg_color = Color(0.72, 0.74, 0.72, 0.88)
 				st.border_color = Color(0.50, 0.52, 0.50, 0.55)
+				st.set_border_width_all(2)
+				st.set_corner_radius_all(12)
 			chip.add_theme_stylebox_override("panel", st)
 	if not GameState.is_tutorial_done():
 		GameState._emit_tutorial_guidance()
@@ -4182,7 +4620,7 @@ func _fill_boosts() -> void:
 	if gt > 0:
 		power_next *= 1.0 + 0.10 * float(gt)
 	var cl_maxed := cl >= cl_max
-	var cl_sub := ("MAX (actuel ?%.1fs)" % power_now) if cl_maxed else ("Clic ?%.1fs (actuel ?%.1fs)" % [power_next, power_now])
+	var cl_sub := ("MAX (actuel %.1fs)" % power_now) if cl_maxed else ("Clic \u2192 %.1fs (actuel \u2192 %.1fs)" % [power_next, power_now])
 	side_content.add_child(_shop_row(
 		"Puissance de clic",
 		cl_sub,
@@ -4558,7 +4996,7 @@ func _boost_info_meta(boost_id: String) -> Dictionary:
 		"click":
 			return {
 				"title": "Puissance de clic",
-				"col": "Puissance (?s)",
+				"col": "Puissance (\u2192s)",
 				"max": GameState.MAX_CLICK_LEVEL,
 				"current": GameState.click_level,
 			}
@@ -5218,7 +5656,7 @@ func _fill_relics() -> void:
 		bst.content_margin_bottom = 8
 		banner.add_theme_stylebox_override("panel", bst)
 		var bl := Label.new()
-		bl.text = "Dernier draft : %s (niv.%d)" % [
+		bl.text = "Dernière relique choisie : %s (niv.%d)" % [
 			str(def.get("title", _last_relic_draft)),
 			GameState.get_relic_level(_last_relic_draft),
 		]
@@ -5297,7 +5735,8 @@ func _relic_info_panel() -> PanelContainer:
 	head.add_child(title)
 
 	var tip := Label.new()
-	tip.text = "Choix libre d'une relique parmi 3 selectionnees aleatoirement a chaque nouveau prestige."
+	var pct := GameState.prestige_points_bonus_pct()
+	tip.text = "Pts prestige = +%d%% or et XP (livraisons et ventes). Améliore tes reliques ici. Au prestige : 1 nouvelle parmi 3 non possédées." % pct
 	tip.add_theme_font_size_override("font_size", 11)
 	tip.add_theme_color_override("font_color", Color(0.90, 0.76, 0.84))
 	tip.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -5429,8 +5868,14 @@ func _relic_list_row(relic_id: String, def: Dictionary) -> Control:
 				_selected_relic_id = ""
 			else:
 				_selected_relic_id = relic_id
+			if _tutorial_mode == &"relics_explain" and owned:
+				_complete_relics_intro()
 			_rebuild_side()
 	)
+	if owned and _tutorial_mode == &"relics_explain" and not header.has_meta("tut_relic_row"):
+		## Premier relique possédée = cible doigt tuto.
+		if _find_tut_relic_row() == null:
+			header.set_meta("tut_relic_row", true)
 	root.add_child(header)
 
 	if open:
@@ -5467,7 +5912,7 @@ func _relic_drawer(relic_id: String, def: Dictionary) -> PanelContainer:
 	if lvl > 0:
 		desc.text += "\nEffet : %s" % GameState.relic_effect_summary(relic_id, lvl)
 	else:
-		desc.text += "\nVerrouillee - obtiens-la via le draft au prestige."
+		desc.text += "\nVerrouillée — obtiens-la en choisissant parmi 3 non possédées au prestige."
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	desc.add_theme_font_size_override("font_size", 11)
 	desc.add_theme_color_override("font_color", Color(0.38, 0.28, 0.34))
@@ -5508,10 +5953,16 @@ func _on_field_action(index: int, _from_drag: bool = false) -> void:
 	if p["ready"]:
 		GameState.harvest_plot(index)
 		return
-	# Plante en pousse : 1 clic = 1 tick (click_power).
+	# Plante en pousse : 1 clic = 1 tick (click_power) + splash voisins si skill.
 	var power := GameState.click_power()
-	if GameState.accelerate_plot(index, power):
+	var hit: Dictionary = GameState.accelerate_plot_with_splash(index)
+	if bool(hit.get("main", false)):
 		_play_plot_click_fx(index, power, true)
+		for s in hit.get("splash", []):
+			var si := int(s.get("index", -1))
+			var sp := float(s.get("power", 0.0))
+			if si >= 0 and sp > 0.0:
+				_play_plot_click_fx(si, sp, true)
 
 
 func _play_plot_click_fx(index: int, seconds_gained: float, show_float: bool = true) -> void:
@@ -5558,34 +6009,44 @@ func _on_gardener_harvest(source_index: int, target_index: int, crop_id: StringN
 
 func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: StringName = &"") -> void:
 	## Tourelle fixe = sprite. Bras mobile texture + pince ancree + legume saisi.
+	## Epaisseur / pince proportionnelles au zoom champ (sinon bras enorme en dezoom).
+	if from_tile == null or not is_instance_valid(from_tile):
+		return
+	if to_tile == null or not is_instance_valid(to_tile):
+		return
+	var z := clampf(_field_zoom, 0.35, FIELD_ZOOM_MAX)
+	var arm_s := clampf(lerpf(0.42, 1.0, inverse_lerp(0.35, 1.0, z)), 0.42, 1.0)
+
 	var socket := from_tile.gardener_emit_global()
 	var aim := to_tile.crop_hit_global()
 	var remain := aim - socket
 	if remain.length_squared() < 0.01:
 		remain = Vector2(0.25, -1.0)
-	var reach := clampf(remain.length(), 26.0, 76.0)
+	var reach := clampf(remain.length(), 26.0 * arm_s, 76.0 * maxf(arm_s, 0.55))
 	var tip_dir0 := remain.normalized()
 	var tip_target := socket + tip_dir0 * reach
-	var flex := lerpf(5.0, 16.0, inverse_lerp(26.0, 76.0, reach))
+	var flex := lerpf(5.0, 16.0, inverse_lerp(26.0 * arm_s, 76.0, reach)) * arm_s
 
 	var host := Control.new()
+	host.name = "GardenerArmFx"
+	host.set_meta("field_fx", true)
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	host.z_index = 72
 	host.top_level = true
 	add_child(host)
 
 	## Pivot de sortie (charniere haut tourelle).
-	var hub := _make_arm_joint(Color(0.82, 0.62, 0.28), 12.0)
+	var hub := _make_arm_joint(Color(0.82, 0.62, 0.28), 12.0 * arm_s)
 	host.add_child(hub)
 	hub.global_position = socket - hub.size * 0.5
 
 	## Couches bras : outline / bois / grain / laiton.
-	var mov_outline := _make_arm_line(11.0, Color(0.14, 0.10, 0.06, 0.98))
-	var mov_dark := _make_arm_line(8.2, Color(0.48, 0.32, 0.14, 0.95))
-	var mov_wood := _make_arm_line(6.4, Color(0.86, 0.64, 0.34, 0.98))
-	var mov_grain_a := _make_arm_line(1.6, Color(0.62, 0.42, 0.18, 0.55))
-	var mov_brass := _make_arm_line(2.4, Color(0.92, 0.74, 0.38, 0.85))
-	var mov_hi := _make_arm_line(1.4, Color(0.98, 0.90, 0.68, 0.55))
+	var mov_outline := _make_arm_line(11.0 * arm_s, Color(0.14, 0.10, 0.06, 0.98))
+	var mov_dark := _make_arm_line(8.2 * arm_s, Color(0.48, 0.32, 0.14, 0.95))
+	var mov_wood := _make_arm_line(6.4 * arm_s, Color(0.86, 0.64, 0.34, 0.98))
+	var mov_grain_a := _make_arm_line(1.6 * arm_s, Color(0.62, 0.42, 0.18, 0.55))
+	var mov_brass := _make_arm_line(2.4 * arm_s, Color(0.92, 0.74, 0.38, 0.85))
+	var mov_hi := _make_arm_line(1.4 * arm_s, Color(0.98, 0.90, 0.68, 0.55))
 	host.add_child(mov_outline)
 	host.add_child(mov_dark)
 	host.add_child(mov_wood)
@@ -5593,16 +6054,16 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 	host.add_child(mov_brass)
 	host.add_child(mov_hi)
 
-	var mid_joint := _make_arm_joint(Color(0.82, 0.62, 0.28), 9.0)
+	var mid_joint := _make_arm_joint(Color(0.82, 0.62, 0.28), 9.0 * arm_s)
 	host.add_child(mid_joint)
-	var ring_a := _make_arm_joint(Color(0.72, 0.52, 0.22), 7.0)
-	var ring_b := _make_arm_joint(Color(0.72, 0.52, 0.22), 7.0)
+	var ring_a := _make_arm_joint(Color(0.72, 0.52, 0.22), 7.0 * arm_s)
+	var ring_b := _make_arm_joint(Color(0.72, 0.52, 0.22), 7.0 * arm_s)
 	host.add_child(ring_a)
 	host.add_child(ring_b)
 
 	var rivets: Array[Panel] = []
 	for _i in 3:
-		var riv := _make_arm_joint(Color(0.90, 0.72, 0.36), 4.5)
+		var riv := _make_arm_joint(Color(0.90, 0.72, 0.36), 4.5 * arm_s)
 		host.add_child(riv)
 		rivets.append(riv)
 
@@ -5610,7 +6071,7 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 	var tip_anchor := Node2D.new()
 	host.add_child(tip_anchor)
 
-	var wrist_cap := _make_arm_joint(Color(0.78, 0.58, 0.24), 8.0)
+	var wrist_cap := _make_arm_joint(Color(0.78, 0.58, 0.24), 8.0 * arm_s)
 	tip_anchor.add_child(wrist_cap)
 	wrist_cap.position = -wrist_cap.size * 0.5
 
@@ -5622,7 +6083,7 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 		claw.texture = _textures["ui_gardener_claw"]
 	else:
 		claw.texture = _make_gardener_claw_fallback()
-	var claw_disp := 28.0
+	var claw_disp := 28.0 * arm_s
 	var claw_tex_sz := claw.texture.get_size() if claw.texture != null else Vector2(28, 28)
 	var claw_s := claw_disp / maxf(claw_tex_sz.x, 1.0)
 	claw.scale = Vector2(claw_s, claw_s)
@@ -5640,7 +6101,7 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 	held.visible = false
 	held.modulate.a = 0.0
 	## Petite icone dans le berceau des doigts (local -Y = vers les pinces).
-	held.position = Vector2(0, -21)
+	held.position = Vector2(0, -21.0 * arm_s)
 	var icon_key := "icon_%s" % String(crop_id)
 	if crop_id != &"" and _textures.has(icon_key):
 		held.texture = _textures[icon_key]
@@ -5648,7 +6109,7 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 		held.texture = _textures["%s_6" % String(crop_id)]
 	if held.texture != null:
 		var ht := held.texture.get_size()
-		var hs := 27.5 / maxf(ht.x, 1.0)
+		var hs := (27.5 * arm_s) / maxf(ht.x, 1.0)
 		held.scale = Vector2(hs, hs)
 	tip_anchor.add_child(held)
 
@@ -5667,7 +6128,7 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 		mov_wood.points = mov
 		mov_brass.points = mov
 		mov_hi.points = mov
-		var grain_off := side * 1.6
+		var grain_off := side * (1.6 * arm_s)
 		mov_grain_a.points = PackedVector2Array([
 			socket + grain_off, mid + grain_off, tip + grain_off
 		])
@@ -5705,7 +6166,9 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 
 		if t >= 0.98 and not state["hit"]:
 			state["hit"] = true
-			to_tile.play_gardener_harvest_fx()
+			## Prestige / rebuild peut free la tuile pendant le tween.
+			if to_tile != null and is_instance_valid(to_tile):
+				to_tile.play_gardener_harvest_fx()
 
 	update_arm.call(0.04)
 	var tw := create_tween()
@@ -5716,8 +6179,10 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 	## Retour rapide vers le jardinier.
 	tw.tween_method(update_arm, 1.0, 0.04, 0.42).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tw.tween_callback(func():
-		var drop_from := tip_anchor.global_position
-		if held.visible and held.texture != null:
+		if not is_instance_valid(host):
+			return
+		var drop_from := tip_anchor.global_position if is_instance_valid(tip_anchor) else Vector2.ZERO
+		if is_instance_valid(held) and held.visible and held.texture != null:
 			drop_from = held.global_position
 		host.queue_free()
 		if crop_id != &"":
@@ -6386,36 +6851,48 @@ func _animate_card_enter_from_left(panel: Control) -> void:
 func _play_level_ups_sequence(from_level: int, to_level: int) -> void:
 	if to_level <= from_level:
 		return
-	for lv in range(from_level + 1, to_level + 1):
-		await _play_level_up_burst(lv)
-	## Premier passage nv.1 -> nv.2 : tuto arbre de competences.
-	if from_level < 2 and to_level >= 2 and not GameState.skill_tree_intro_seen:
+	## Une seule anim ecran (dernier niveau) — evite le spam multi-level.
+	var gained := to_level - from_level
+	await _play_level_up_burst(to_level, gained)
+	## Tuto arbre : uniquement 1ere run, premier passage nv.1 -> nv.2 (jamais apres prestige).
+	if GameState.prestige_level == 0 \
+			and from_level < 2 and to_level >= 2 \
+			and not GameState.skill_tree_intro_seen:
 		_on_tutorial_nudge(&"skill_tree")
 
 
-func _play_level_up_burst(new_level: int) -> void:
+func _field_center_global() -> Vector2:
+	## Centre visuel de la zone champ (pas tout le viewport).
+	var frame := get_node_or_null("%FieldFrame") as Control
+	if frame != null and is_instance_valid(frame) and frame.size.x > 8.0:
+		return frame.get_global_rect().get_center()
+	if field_host != null and is_instance_valid(field_host) and field_host.size.x > 8.0:
+		return field_host.get_global_rect().get_center()
+	return get_viewport_rect().get_center()
+
+
+func _play_level_up_burst(new_level: int, levels_gained: int = 1) -> void:
+	var center := _field_center_global()
 	var host := Control.new()
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	host.top_level = true
 	host.z_index = 200
 	add_child(host)
-	var vr := get_viewport_rect()
-	host.global_position = vr.get_center()
 
 	var col := VBoxContainer.new()
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_theme_constant_override("separation", 6)
+	col.add_theme_constant_override("separation", 8)
 	col.alignment = BoxContainer.ALIGNMENT_CENTER
 	host.add_child(col)
 
 	var icon := TextureRect.new()
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.custom_minimum_size = Vector2(72, 72)
+	icon.custom_minimum_size = Vector2(80, 80)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	if _textures.has("ui_sparkle"):
-		icon.texture = _textures["ui_sparkle"]
+	if _textures.has("ui_level_up"):
+		icon.texture = _textures["ui_level_up"]
 	elif _textures.has("ui_coin_skill"):
 		icon.texture = _textures["ui_coin_skill"]
 	elif _textures.has("ui_xp"):
@@ -6432,24 +6909,138 @@ func _play_level_up_burst(new_level: int) -> void:
 	lab.add_theme_constant_override("outline_size", 6)
 	col.add_child(lab)
 
+	if levels_gained > 1:
+		var sub := Label.new()
+		sub.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		sub.text = "+%d niveaux" % levels_gained
+		sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		sub.add_theme_font_size_override("font_size", 16)
+		sub.add_theme_color_override("font_color", Color(0.85, 0.95, 0.70))
+		sub.add_theme_color_override("font_outline_color", Color(0.10, 0.16, 0.10, 0.85))
+		sub.add_theme_constant_override("outline_size", 4)
+		col.add_child(sub)
+
+	## Gain de points de competence (1 par niveau).
+	var sp_gain := maxi(1, levels_gained)
+	var sp_row := HBoxContainer.new()
+	sp_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sp_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	sp_row.add_theme_constant_override("separation", 8)
+	col.add_child(sp_row)
+	var sp_icon := TextureRect.new()
+	sp_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sp_icon.custom_minimum_size = Vector2(28, 28)
+	sp_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	sp_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	sp_icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if _textures.has("ui_coin_skill"):
+		sp_icon.texture = _textures["ui_coin_skill"]
+	sp_row.add_child(sp_icon)
+	var sp_lab := Label.new()
+	sp_lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	sp_lab.text = "+%d pts de competences obtenues" % sp_gain
+	sp_lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sp_lab.add_theme_font_size_override("font_size", 18)
+	sp_lab.add_theme_color_override("font_color", Color(0.72, 0.88, 1.0))
+	sp_lab.add_theme_color_override("font_outline_color", Color(0.08, 0.14, 0.22, 0.9))
+	sp_lab.add_theme_constant_override("outline_size", 5)
+	sp_row.add_child(sp_lab)
+
+	await get_tree().process_frame
 	await get_tree().process_frame
 	if not is_instance_valid(host):
 		return
-	## Centre le bloc.
-	host.global_position = vr.get_center() - col.size * 0.5
-	host.pivot_offset = col.size * 0.5
+	## Recentre exactement sur le champ (apres layout reel).
+	center = _field_center_global()
+	var sz := col.size
+	if sz.x < 8.0 or sz.y < 8.0:
+		sz = col.get_combined_minimum_size()
+	host.global_position = center - sz * 0.5
+	host.pivot_offset = sz * 0.5
 	host.scale = Vector2(0.55, 0.55)
 	host.modulate.a = 0.0
+
 	var tw := create_tween()
 	tw.tween_property(host, "scale", Vector2(1.12, 1.12), 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 	tw.parallel().tween_property(host, "modulate:a", 1.0, 0.14)
 	tw.tween_property(host, "scale", Vector2.ONE, 0.12)
-	tw.tween_interval(0.55)
-	tw.tween_property(host, "modulate:a", 0.0, 0.28)
-	tw.parallel().tween_property(host, "global_position", host.global_position + Vector2(0, -28), 0.28)
+	tw.tween_interval(1.35)
 	await tw.finished
+	if not is_instance_valid(host):
+		return
+
+	## Pieces de competence qui rejoignent le stock HUD (fade en parallele du vol).
+	var fly_from := sp_row.get_global_rect().get_center() if is_instance_valid(sp_row) else center
+	var tw2 := create_tween()
+	tw2.tween_property(host, "modulate:a", 0.0, 0.32)
+	tw2.parallel().tween_property(host, "global_position", host.global_position + Vector2(0, -24), 0.32)
+	await _fly_skill_points_to_hud(fly_from, sp_gain)
 	if is_instance_valid(host):
 		host.queue_free()
+
+
+func _fly_skill_points_to_hud(from_global: Vector2, amount: int) -> void:
+	## Vol des pieces competence vers le compteur en haut.
+	var dest := from_global
+	if cur_skill_icon != null and is_instance_valid(cur_skill_icon):
+		dest = cur_skill_icon.get_global_rect().get_center()
+	elif cur_skill_label != null and is_instance_valid(cur_skill_label):
+		dest = cur_skill_label.get_global_rect().get_center()
+
+	var n_coins := clampi(amount + 1, 2, 5)
+	var max_wait := 0.0
+	for i in n_coins:
+		var fly := TextureRect.new()
+		fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fly.top_level = true
+		fly.z_index = 210
+		fly.size = Vector2(24, 24)
+		fly.custom_minimum_size = fly.size
+		fly.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		fly.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		fly.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		if _textures.has("ui_coin_skill"):
+			fly.texture = _textures["ui_coin_skill"]
+		fly.pivot_offset = fly.size * 0.5
+		add_child(fly)
+		var jitter := Vector2(randf_range(-12.0, 12.0), randf_range(-8.0, 8.0))
+		fly.global_position = from_global - fly.size * 0.5 + jitter
+		var delay := float(i) * 0.06
+		max_wait = maxf(max_wait, delay + 0.58)
+		var mid := (from_global + dest) * 0.5 + Vector2(randf_range(-28.0, 28.0), -50.0 - randf() * 24.0)
+		var start_p := fly.global_position
+		var end_p := dest - fly.size * 0.5
+		var tw := create_tween()
+		tw.tween_interval(delay)
+		var step := func(u: float) -> void:
+			if not is_instance_valid(fly):
+				return
+			var a: Vector2 = start_p.lerp(mid, u)
+			var b: Vector2 = mid.lerp(end_p, u)
+			fly.global_position = a.lerp(b, u)
+			fly.scale = Vector2.ONE * lerpf(0.95, 1.2, sin(u * PI))
+		tw.tween_method(step, 0.0, 1.0, 0.58).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_callback(func():
+			if is_instance_valid(fly):
+				fly.queue_free()
+		)
+
+	if cur_skill_label != null and is_instance_valid(cur_skill_label):
+		var pulse := create_tween()
+		pulse.tween_interval(maxf(0.15, max_wait - 0.25))
+		pulse.tween_property(cur_skill_label, "modulate", Color(0.75, 1.15, 1.45), 0.12)
+		pulse.tween_callback(_refresh_currencies)
+		pulse.tween_property(cur_skill_label, "modulate", Color.WHITE, 0.30)
+	if cur_skill_icon != null and is_instance_valid(cur_skill_icon):
+		cur_skill_icon.pivot_offset = cur_skill_icon.size * 0.5
+		var ip := create_tween()
+		ip.tween_interval(maxf(0.15, max_wait - 0.25))
+		ip.tween_property(cur_skill_icon, "scale", Vector2(1.25, 1.25), 0.12)
+		ip.tween_property(cur_skill_icon, "scale", Vector2.ONE, 0.28)
+
+	if max_wait > 0.0:
+		await get_tree().create_timer(max_wait).timeout
+	_refresh_player_hud()
 
 
 func _play_order_success_fx(
@@ -6672,6 +7263,7 @@ func _on_prestige() -> void:
 	modal.confirmed.connect(func():
 		var draft := RelicDraftModalScript.present(self, _textures)
 		draft.picked.connect(func(relic_id: String):
+			var was_first := not GameState.relics_intro_seen
 			_rebuilding_ui = true
 			GameState.do_prestige_with_relic(relic_id)
 			_last_relic_draft = relic_id
@@ -6679,9 +7271,34 @@ func _on_prestige() -> void:
 			_selected_relic_id = relic_id
 			_rebuilding_ui = false
 			_reload_run_ui(false)
-			_show_toast("Prestige reussi - relique obtenue !")
+			_show_toast("Prestige réussi !")
+			if was_first:
+				call_deferred("_start_relics_intro_tutorial")
+		)
+		## Annuler au draft = aucun prestige (run intacte).
+		draft.cancelled.connect(func():
+			_show_toast("Prestige annulé.")
 		)
 	)
+
+
+func _start_relics_intro_tutorial() -> void:
+	if GameState.relics_intro_seen:
+		return
+	## Evite un conflit avec un vieux tuto compétences encore actif.
+	_skill_tree_tuto_active = false
+	if _tutorial_mode == &"skill_tree":
+		_tutorial_mode = &""
+	_on_tutorial_nudge(&"relics_tab")
+
+
+func _complete_relics_intro() -> void:
+	GameState.relics_intro_seen = true
+	GameState.save_game()
+	_tutorial_mode = &""
+	_last_tutorial_nudge = &""
+	_clear_finger_tutorial()
+	_show_toast("Astuce : plus tu as de pts prestige, plus ton or et ton XP grimpent.")
 
 
 func _refresh_all() -> void:

@@ -1,9 +1,10 @@
 class_name RelicDraftModal
 extends ColorRect
-## Draft obligatoire au prestige : choisir 1 relique parmi 3.
+## Draft au prestige : choisir 1 relique parmi 3 (annulable).
 
 
 signal picked(relic_id: String)
+signal cancelled
 
 
 static func present(host: Node, textures: Dictionary = {}) -> RelicDraftModal:
@@ -51,7 +52,7 @@ func _build(textures: Dictionary) -> void:
 	body.add_child(title)
 
 	var sub := Label.new()
-	sub.text = "3 propositions · 1 choix · permanente. Améliore-la ensuite avec tes points de prestige."
+	sub.text = "1 nouvelle parmi jusqu'à 3 non possédées. Tu peux encore annuler."
 	sub.add_theme_font_size_override("font_size", 12)
 	sub.add_theme_color_override("font_color", Color(0.42, 0.34, 0.40))
 	sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -65,9 +66,34 @@ func _build(textures: Dictionary) -> void:
 	body.add_child(row)
 
 	var options := GameState.build_relic_draft(3)
-	var defs: Dictionary = GameState.relic_defs()
-	for rid in options:
-		row.add_child(_card(str(rid), defs.get(str(rid), {}), textures))
+	if options.is_empty():
+		var empty := Label.new()
+		empty.text = "Tu as déjà toutes les reliques.\nLe prestige te donne seulement des points."
+		empty.add_theme_font_size_override("font_size", 13)
+		empty.add_theme_color_override("font_color", Color(0.36, 0.28, 0.34))
+		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		body.add_child(empty)
+		var ok_empty := Button.new()
+		ok_empty.text = "Prestiger sans relique"
+		ok_empty.focus_mode = Control.FOCUS_NONE
+		ok_empty.custom_minimum_size = Vector2(200, 40)
+		ok_empty.pressed.connect(func(): _pick(""))
+		body.add_child(ok_empty)
+	else:
+		var defs: Dictionary = GameState.relic_defs()
+		for rid in options:
+			row.add_child(_card(str(rid), defs.get(str(rid), {}), textures))
+
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	body.add_child(actions)
+	var cancel := Button.new()
+	cancel.text = "Annuler le prestige"
+	cancel.focus_mode = Control.FOCUS_NONE
+	cancel.custom_minimum_size = Vector2(180, 38)
+	cancel.pressed.connect(_cancel)
+	actions.add_child(cancel)
 
 	call_deferred("_center", panel)
 
@@ -128,7 +154,7 @@ func _card(relic_id: String, def: Dictionary, textures: Dictionary) -> Control:
 	elif at_max:
 		status.text = "Déjà max · niv.%d" % lvl
 	else:
-		status.text = "Possédée · niv.%d→%d" % [lvl, lvl + 1]
+		status.text = "Possédée · niv.%d\u2192%d" % [lvl, lvl + 1]
 	status.add_theme_font_size_override("font_size", 11)
 	status.add_theme_color_override("font_color", Color(0.48, 0.32, 0.40))
 	status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -167,6 +193,11 @@ func _card(relic_id: String, def: Dictionary, textures: Dictionary) -> Control:
 
 func _pick(relic_id: String) -> void:
 	picked.emit(relic_id)
+	queue_free()
+
+
+func _cancel() -> void:
+	cancelled.emit()
 	queue_free()
 
 

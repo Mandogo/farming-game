@@ -40,11 +40,12 @@ const ORDER_DURATION_IMPATIENT := 30.0
 const TUTORIAL_ORDER_DURATION := 180.0
 const PRESTIGE_LEVEL_REQUIRED := 10  # Seuil fixe à chaque prestige (plus de 20/30/…)
 const PRESTIGE_LEVEL_STEP := 10  # legacy / docs
-const PRESTIGE_POINTS_EARLY := 1  # P0→P9 : draft = récompense principale
-const PRESTIGE_POINTS_AT_10 := 12  # 10ᵉ prestige : premier gros paquet reliques
-const PRESTIGE_POINTS_LATE_BASE := 10  # P10+ : pts pour upgrader les reliques
-
+const PRESTIGE_POINTS_BASE := 1  # Pts au seuil nv.10 ; +1 par niveau au-dessus
+## Chaque point de prestige permanent : +10 % or et XP (livraisons + ventes).
+const PRESTIGE_POINT_BONUS_PCT := 0.10
 ## Courbe XP : ~8300 XP pour nv.10 → objectif 1er prestige ≈ 30 min (jeu engagé).
+## Après nv.10 : surcoût (limite le farm de pts prestige hors run).
+const XP_POST_THRESHOLD_EXTRA := 1.50
 const XP_LEVEL_BASE := 200
 const XP_LEVEL_GROWTH := 1.36
 const RELIC_MAX_LEVEL := 5
@@ -110,10 +111,14 @@ var unlocked_plots: int = START_PLOTS
 var fertilizer_owned: int = 0
 var gardener_owned: int = 0
 var delivery_owned: int = 0
-var _gardener_timer: float = 0.0
+## Delai min entre deux demarrages de bras (desync visuel).
+const GARDENER_STAGGER_MIN := 0.35
+var _gardener_next_global: float = 0.0
 var terrain_edit_seen: bool = false
 ## Tuto "ouvre l'arbre de competences" apres le 1er level-up.
 var skill_tree_intro_seen: bool = false
+## Tuto onglet Reliques apres le 1er prestige.
+var relics_intro_seen: bool = false
 ## Derniers gains d'une livraison (pour FX UI).
 var _last_claim_money: int = 0
 var _last_claim_xp: int = 0
@@ -183,14 +188,14 @@ const _SKILL_ORDER := [
 
 const _SKILL_DEFS := {
 	"root_hub": {
-		"title": "Serre ouverte", "short": "Serre",
-		"desc": "Hub de run : +10 % or et +10 % XP sur les livraisons. Point de départ de ta spé.",
-		"cost": 1, "icon": "ui_logo", "parent": "", "branch": "trunk", "hub": true,
+		"title": "Main verte", "short": "Splash",
+		"desc": "Clic sur une culture : +25 % de la puissance sur les parcelles voisines (niv.1). Améliorable plus tard jusqu’à 100 %.",
+		"cost": 1, "icon": "ui_click_hand", "parent": "", "branch": "trunk", "hub": true,
 	},
 	## Combo — spé Rythme / burst
 	"combo_flash": {
 		"title": "Combo Flash", "short": "Flash",
-		"desc": "Spé Combo : seuil 4 → 3 livraisons. Enchaîne plus vite la Frénésie.",
+		"desc": "Spé Combo : seuil 4 \u2192 3 livraisons. Enchaîne plus vite la Frénésie.",
 		"cost": 2, "icon": "ui_combo", "parent": "root_hub", "branch": "combo",
 	},
 	"combo_boost": {
@@ -200,7 +205,7 @@ const _SKILL_DEFS := {
 	},
 	"combo_cd": {
 		"title": "Relance rapide", "short": "Relance",
-		"desc": "Spé Combo : cooldown 105 → 90 s. Plus de fenêtres par run.",
+		"desc": "Spé Combo : cooldown 105 \u2192 90 s. Plus de fenêtres par run.",
 		"cost": 2, "icon": "ui_chrono", "parent": "combo_flash", "branch": "combo",
 	},
 	"combo_master": {
@@ -289,7 +294,7 @@ const _SKILL_DEFS := {
 	},
 	"atelier_live_chain": {
 		"title": "Chaîne vive", "short": "Chaîne",
-		"desc": "Jardiniers : délai de tournée −20 % (2,0 s → 1,6 s).",
+		"desc": "Jardiniers : délai de tournée −20 % (2,0 s \u2192 1,6 s).",
 		"cost": 2, "icon": "ui_chrono", "parent": "atelier_gears", "branch": "atelier",
 	},
 	"atelier_network": {
@@ -464,7 +469,7 @@ func _reset_run(from_prestige: bool) -> void:
 	fertilizer_owned = 0
 	gardener_owned = 0
 	delivery_owned = 0
-	_gardener_timer = 0.0
+	_gardener_next_global = 0.0
 	skills_owned.clear()
 	combo_overflow_gained = 0.0
 	free_refuses_left = 0
@@ -488,6 +493,8 @@ func _reset_run(from_prestige: bool) -> void:
 	_build_plots()
 	_place_starting_lands()
 	if from_prestige:
+		## Le tuto compétences ne doit plus jamais se rejouer après un prestige.
+		skill_tree_intro_seen = true
 		toast.emit("Nouveau contrat !")
 	_emit_economy()
 	boosts_changed.emit()
@@ -532,8 +539,28 @@ func _empty_plot(unlocked: bool) -> Dictionary:
 	}
 
 
+func _best_land_rect(n: int) -> Vector2i:
+	## Rectangle le plus carré possible pour n cases (w×h >= n).
+	if n <= 1:
+		return Vector2i(1, 1)
+	var best_w := n
+	var best_h := 1
+	var best_score := 999999
+	for h in range(1, n + 1):
+		var w := int(ceil(float(n) / float(h)))
+		if w > GRID_W or h > GRID_H:
+			continue
+		var waste := w * h - n
+		var score := absi(w - h) * 10 + waste
+		if score < best_score:
+			best_score = score
+			best_w = w
+			best_h = h
+	return Vector2i(best_w, best_h)
+
+
 func _place_starting_lands() -> void:
-	## Place les jetons de départ en bas-centre (anneaux Chebyshev).
+	## Place les jetons de départ en rectangle compact (carré autant que possible).
 	for p in plots:
 		p["unlocked"] = false
 		p["crop"] = null
@@ -541,22 +568,23 @@ func _place_starting_lands() -> void:
 		p["ready"] = false
 		p["auto_plant_id"] = &""
 		p["machine"] = ""
-	var origin := Vector2i(int(GRID_W / 2), GRID_H - 3)
+	var n := unlocked_plots
+	if n <= 0:
+		return
+	var sz := _best_land_rect(n)
+	var origin_x := clampi(int(GRID_W / 2) - int(sz.x / 2), 0, maxi(0, GRID_W - sz.x))
+	## Ancré vers le bas de la grille iso.
+	var origin_y := clampi(GRID_H - sz.y - 1, 0, maxi(0, GRID_H - sz.y))
 	var placed := 0
-	for ring in range(0, 8):
-		for dy in range(-ring, ring + 1):
-			for dx in range(-ring, ring + 1):
-				if maxi(absi(dx), absi(dy)) != ring:
-					continue
-				if placed >= unlocked_plots:
-					return
-				var col := origin.x + dx
-				var row := origin.y + dy
-				var idx := rc_to_index(col, row)
-				if idx < 0:
-					continue
-				plots[idx]["unlocked"] = true
-				placed += 1
+	for dy in sz.y:
+		for dx in sz.x:
+			if placed >= n:
+				return
+			var idx := rc_to_index(origin_x + dx, origin_y + dy)
+			if idx < 0:
+				continue
+			plots[idx]["unlocked"] = true
+			placed += 1
 
 
 func land_placed() -> int:
@@ -576,58 +604,74 @@ func is_terrain_edit_unlocked() -> bool:
 	return unlocked_plots >= 10
 
 
+func _land_placement_score(candidate: int) -> float:
+	## Favorise : voisins orthogonaux, bbox compacte et carrée (pas la diagonale).
+	var ortho := 0
+	for ni in adjacent_indices(candidate, false):
+		if plots[ni]["unlocked"]:
+			ortho += 1
+	var min_x := 999
+	var max_x := -999
+	var min_y := 999
+	var max_y := -999
+	var any := false
+	for i in plots.size():
+		if i != candidate and not plots[i]["unlocked"]:
+			continue
+		var rc := index_to_rc(i)
+		min_x = mini(min_x, rc.x)
+		max_x = maxi(max_x, rc.x)
+		min_y = mini(min_y, rc.y)
+		max_y = maxi(max_y, rc.y)
+		any = true
+	if not any:
+		return 0.0
+	var bw := max_x - min_x + 1
+	var bh := max_y - min_y + 1
+	var area := bw * bh
+	var aspect := absi(bw - bh)
+	## Beaucoup de voisins ortho > bbox carrée > petite aire.
+	return float(ortho) * 100.0 - float(aspect) * 18.0 - float(area) * 2.0
+
+
 func _auto_place_one_land() -> bool:
-	## Place 1 terre adjacente au champ existant (fallback : spirale bas-centre).
+	## Place 1 terre orthogonalement adjacente, en gardant une forme carrée/rectangulaire.
 	if land_placed() >= unlocked_plots:
 		return false
 	var candidates: Array[int] = []
 	for i in plots.size():
 		if not plots[i]["unlocked"]:
 			continue
-		for ni in adjacent_indices(i, true):
+		## Adjacence 4-dir seulement (pas diagonale).
+		for ni in adjacent_indices(i, false):
 			if plots[ni]["unlocked"]:
 				continue
 			if not candidates.has(ni):
 				candidates.append(ni)
 	if not candidates.is_empty():
-		## Préférer la case la plus proche du centroïde du champ (compact).
-		var cx := 0.0
-		var cy := 0.0
-		var n := 0
-		for i in plots.size():
-			if not plots[i]["unlocked"]:
-				continue
-			var rc := index_to_rc(i)
-			cx += float(rc.x)
-			cy += float(rc.y)
-			n += 1
-		if n > 0:
-			cx /= float(n)
-			cy /= float(n)
 		var best := candidates[0]
-		var best_d := 1.0e9
+		var best_score := -1.0e9
 		for ci in candidates:
-			var rc2 := index_to_rc(ci)
-			var d := absf(float(rc2.x) - cx) + absf(float(rc2.y) - cy)
-			if d < best_d:
-				best_d = d
+			var sc := _land_placement_score(ci)
+			if sc > best_score:
+				best_score = sc
 				best = ci
 		plots[best]["unlocked"] = true
 		plots[best]["machine"] = ""
 		return true
-	## Aucune adjacence (grille vide) : spirale de départ.
-	var origin := Vector2i(int(GRID_W / 2), GRID_H - 3)
-	for ring in range(0, 12):
-		for dy in range(-ring, ring + 1):
-			for dx in range(-ring, ring + 1):
-				if maxi(absi(dx), absi(dy)) != ring:
-					continue
-				var idx := rc_to_index(origin.x + dx, origin.y + dy)
-				if idx < 0 or plots[idx]["unlocked"]:
-					continue
-				plots[idx]["unlocked"] = true
-				plots[idx]["machine"] = ""
-				return true
+	## Grille vide : repart du rectangle de départ.
+	var origin := Vector2i(int(GRID_W / 2), GRID_H - 2)
+	var idx0 := rc_to_index(origin.x, origin.y)
+	if idx0 >= 0 and not plots[idx0]["unlocked"]:
+		plots[idx0]["unlocked"] = true
+		plots[idx0]["machine"] = ""
+		return true
+	## Dernier recours : premiere case libre.
+	for i in plots.size():
+		if not plots[i]["unlocked"]:
+			plots[i]["unlocked"] = true
+			plots[i]["machine"] = ""
+			return true
 	return false
 
 
@@ -698,7 +742,10 @@ func apply_terrain_layout(snap: Dictionary) -> void:
 			p["crop"] = null
 			p["grown"] = 0.0
 			p["ready"] = false
-	_gardener_timer = 0.0
+			## Phase initiale aleatoire pour desynchroniser les bras.
+			if not p.has("gardener_cd") or float(p.get("gardener_cd", 0.0)) <= 0.0:
+				p["gardener_cd"] = randf() * gardener_interval()
+	_gardener_next_global = 0.0
 	invalidate_fertilizer_cover()
 	plots_changed.emit()
 	save_game()
@@ -715,8 +762,12 @@ func reset_terrain_to_stock() -> Dictionary:
 
 
 func _xp_for_player_level(level: int) -> int:
-	## Niveau N → N+1 : BASE × GROWTH^(N-1). Total nv.1→10 ≈ 8300 XP.
-	return maxi(1, int(float(XP_LEVEL_BASE) * pow(XP_LEVEL_GROWTH, maxi(0, level - 1)) * xp_curve_mult()))
+	## Niveau N → N+1 : BASE × GROWTH^(N-1). Après nv.10 : surcoût pour freiner le farm de pts prestige.
+	var base := float(XP_LEVEL_BASE) * pow(XP_LEVEL_GROWTH, maxi(0, level - 1))
+	if level >= PRESTIGE_LEVEL_REQUIRED:
+		var steps := level - PRESTIGE_LEVEL_REQUIRED + 1
+		base *= pow(XP_POST_THRESHOLD_EXTRA, float(steps))
+	return maxi(1, int(base * xp_curve_mult()))
 
 
 func get_selected_crop() -> CropData:
@@ -790,20 +841,17 @@ func is_combo_ready() -> bool:
 
 func mission_money_mult() -> float:
 	var m := 1.0
-	if has_skill("root_hub"):
-		m *= 1.10
 	if has_skill("money_mission"):
 		m *= 1.20
 	var gr := get_relic_level("golden_receipt")
 	if gr > 0:
 		m *= 1.0 + 0.05 * float(gr)
+	m *= prestige_points_mult()
 	return m
 
 
 func mission_xp_mult() -> float:
 	var m := 1.0
-	if has_skill("root_hub"):
-		m *= 1.10
 	if has_skill("xp_mission"):
 		m *= 1.20
 	if has_skill("xp_mission_2"):
@@ -811,7 +859,71 @@ func mission_xp_mult() -> float:
 	var gl := get_relic_level("green_ledger")
 	if gl > 0:
 		m *= 1.0 + 0.05 * float(gl)
+	m *= prestige_points_mult()
 	return m
+
+
+func click_splash_level() -> int:
+	## Niveaux futurs 1–4 (25 %…100 %). Pour l’instant : 1 si le hub est acheté.
+	if not has_skill("root_hub"):
+		return 0
+	return 1
+
+
+func click_splash_ratio() -> float:
+	## Fraction de la puissance de clic appliquée aux voisins (Chebyshev 1).
+	var lvl := click_splash_level()
+	if lvl <= 0:
+		return 0.0
+	return clampf(0.25 * float(lvl), 0.0, 1.0)
+
+
+func adjacent_plot_indices(index: int) -> Array[int]:
+	## 8 cases autour (distance Chebyshev = 1).
+	var out: Array[int] = []
+	var rc := index_to_rc(index)
+	for dy in range(-1, 2):
+		for dx in range(-1, 2):
+			if dx == 0 and dy == 0:
+				continue
+			var ni := rc_to_index(rc.x + dx, rc.y + dy)
+			if ni >= 0:
+				out.append(ni)
+	return out
+
+
+func accelerate_plot_with_splash(index: int) -> Dictionary:
+	## Clic joueur : accélère la cible + splash voisins si skill hub.
+	## Retourne {main: bool, splash: Array[{index, power}]}.
+	var result := {"main": false, "splash": []}
+	var power := click_power()
+	if not accelerate_plot(index, power, true, false):
+		plots_changed.emit()
+		return result
+	result["main"] = true
+	var ratio := click_splash_ratio()
+	if ratio > 0.0:
+		var splash_power := power * ratio
+		var splash_hits: Array = []
+		for ni in adjacent_plot_indices(index):
+			if accelerate_plot(ni, splash_power, false, false):
+				splash_hits.append({"index": ni, "power": splash_power})
+		result["splash"] = splash_hits
+	plots_changed.emit()
+	return result
+
+
+func prestige_points_mult() -> float:
+	## Boost permanent : +10 % or/XP par point de prestige.
+	return 1.0 + PRESTIGE_POINT_BONUS_PCT * float(maxi(0, prestige_points))
+
+
+func prestige_points_bonus_pct() -> int:
+	return int(round(100.0 * PRESTIGE_POINT_BONUS_PCT * float(maxi(0, prestige_points))))
+
+
+func prestige_bonus_pct_per_point() -> int:
+	return int(round(100.0 * PRESTIGE_POINT_BONUS_PCT))
 
 
 func xp_curve_mult() -> float:
@@ -920,7 +1032,10 @@ func unit_sell_price(crop_id: StringName) -> int:
 
 
 func preview_sell_gold(crop_id: StringName, amount: int) -> int:
-	return unit_sell_price(crop_id) * maxi(0, amount)
+	var base := unit_sell_price(crop_id) * maxi(0, amount)
+	if base <= 0:
+		return 0
+	return maxi(1, int(round(float(base) * prestige_points_mult())))
 
 
 func sell_quick_amounts(stock_amt: int) -> Array[int]:
@@ -953,6 +1068,7 @@ func sell_crop_amount(crop_id: StringName, amount: int) -> int:
 	if not remove_stock(crop_id, amount):
 		return 0
 	var gold := amount * unit_sell_price(crop_id)
+	gold = maxi(1, int(round(float(gold) * prestige_points_mult())))
 	add_money(gold)
 	_track_stat("sold_items", amount)
 	_track_stat("gold_sold", gold)
@@ -1476,31 +1592,43 @@ func _tick_plots(delta: float) -> void:
 
 func _tick_gardeners(delta: float) -> void:
 	if machine_placed_count(MACHINE_GARDENER) <= 0:
-		_gardener_timer = 0.0
+		_gardener_next_global = 0.0
 		return
-	_gardener_timer += delta
+	_gardener_next_global = maxf(0.0, _gardener_next_global - delta)
 	var interval := gardener_interval()
+	var arms := gardener_arms()
 	var acted := false
-	while _gardener_timer >= interval:
-		_gardener_timer -= interval
+	## Un seul jardinier peut demarrer une action par frame (desync visuel).
+	var launched := false
+	for gi in plots.size():
+		var p: Dictionary = plots[gi]
+		if str(p.get("machine", "")) != MACHINE_GARDENER:
+			continue
+		if not p["unlocked"]:
+			continue
+		## Init phase aleatoire la 1re fois (saves / anciens plots).
+		if not p.has("gardener_cd"):
+			p["gardener_cd"] = randf() * interval
+		var cd := float(p.get("gardener_cd", 0.0))
+		if cd > 0.0:
+			p["gardener_cd"] = cd - delta
+			continue
+		if launched or _gardener_next_global > 0.0:
+			## Pret mais on attend le stagger global / un autre bras.
+			continue
 		var hits := 0
-		## Chaque jardinier place agit independamment (N bras / jardinier).
-		var arms := gardener_arms()
-		for gi in plots.size():
-			if str(plots[gi].get("machine", "")) != MACHINE_GARDENER:
-				continue
-			if not plots[gi]["unlocked"]:
-				continue
-			for _arm in arms:
-				if _gardener_try_action(gi):
-					hits += 1
-					acted = true
-				else:
-					break
-		if hits <= 0:
-			## Rien a faire — garder un leger surplus pour reagir vite
-			_gardener_timer = minf(_gardener_timer, interval * 0.25)
-			break
+		for _arm in arms:
+			if _gardener_try_action(gi):
+				hits += 1
+				acted = true
+			else:
+				break
+		if hits > 0:
+			## Cooldown perso + jitter pour ne plus se resynchroniser.
+			p["gardener_cd"] = interval * randf_range(0.85, 1.20)
+			_gardener_next_global = GARDENER_STAGGER_MIN
+			launched = true
+		## sinon cd reste a 0 : reessaie des qu'une culture est prete
 	if acted:
 		plots_changed.emit()
 
@@ -2061,16 +2189,97 @@ func prestige_unlock_ratio() -> float:
 func calc_prestige_points_gain() -> int:
 	if not can_prestige():
 		return 0
-	## Avant le 10ᵉ : 1 pt (le draft de relique compte le plus).
-	## Au 10ᵉ (P9→P10) : gros bonus — collection souvent complète → upgrader.
-	## Ensuite : paquet solide pour monter les niveaux de reliques.
-	if prestige_level < 9:
-		return PRESTIGE_POINTS_EARLY
-	if prestige_level == 9:
-		return PRESTIGE_POINTS_AT_10
-	var gain := PRESTIGE_POINTS_LATE_BASE + (prestige_level - 10) * 2
-	gain += maxi(0, (unlocked_plots - START_PLOTS) / 10)
-	return maxi(PRESTIGE_POINTS_LATE_BASE, gain)
+	## Base au seuil (nv.10) + 1 pt par niveau au-dessus.
+	return PRESTIGE_POINTS_BASE + maxi(0, player_level - prestige_level_required())
+
+
+func prestige_unlocks_at(p: int) -> Array[Dictionary]:
+	## Contenu débloqué exactement au palier de prestige `p` (icônes pour l'UI).
+	var out: Array[Dictionary] = []
+	## 1 nouvelle relique à chaque prestige jusqu'au nombre total de reliques.
+	if p >= 1 and p <= _RELIC_ORDER.size():
+		out.append({
+			"kind": "relic",
+			"id": "new_relic",
+			"label": "+1 reliques",
+			"icon": "ui_tab_prestige",
+		})
+	for crop in crops:
+		if crop == null:
+			continue
+		if int(crop.unlock_prestige) != p:
+			continue
+		out.append({
+			"kind": "crop",
+			"id": String(crop.id),
+			"label": crop.display_name,
+			"icon": "icon_%s" % String(crop.id),
+		})
+	match p:
+		1:
+			out.append({
+				"kind": "machine",
+				"id": "fertilizer",
+				"label": "Fertiliseur",
+				"icon": "ui_fertilizer",
+			})
+		3:
+			out.append({
+				"kind": "machine",
+				"id": "gardener",
+				"label": "Jardinier",
+				"icon": "ui_gardener",
+			})
+		5:
+			out.append({
+				"kind": "machine",
+				"id": "delivery",
+				"label": "Livreur auto",
+				"icon": "ui_auto_delivery",
+			})
+	return out
+
+
+func prestige_max_unlock_tier() -> int:
+	## Dernier palier avec un déblocage (relique / culture / machine).
+	var m := _RELIC_ORDER.size()
+	for crop in crops:
+		if crop != null:
+			m = maxi(m, int(crop.unlock_prestige))
+	m = maxi(m, 5) ## livreur auto @ P5
+	return m
+
+
+func prestige_next_unlock_lines() -> Array[String]:
+	## Aperçu texte du prochain palier (compat).
+	var lines: Array[String] = []
+	for u in prestige_unlocks_at(prestige_level + 1):
+		var kind := str(u.get("kind", ""))
+		var label := str(u.get("label", ""))
+		if kind == "crop":
+			lines.append("Culture : %s" % label)
+		elif kind == "machine":
+			lines.append("Machine : %s" % label)
+		elif kind == "relic":
+			lines.append(label)
+		else:
+			lines.append(label)
+	return lines
+
+
+func total_stock_count() -> int:
+	var n := 0
+	for k in stock:
+		n += int(stock[k])
+	return n
+
+
+func owned_relic_count() -> int:
+	var n := 0
+	for id in relic_levels:
+		if int(relic_levels[id]) > 0:
+			n += 1
+	return n
 
 
 func do_prestige() -> void:
@@ -2079,22 +2288,27 @@ func do_prestige() -> void:
 		toast.emit("Atteins le niveau %d pour débloquer le Prestige." % prestige_level_required())
 		return
 	var draft := build_relic_draft(1)
-	var pick := draft[0] if not draft.is_empty() else "green_thumb"
-	do_prestige_with_relic(pick)
+	if draft.is_empty():
+		do_prestige_with_relic("")
+		return
+	do_prestige_with_relic(draft[0])
 
 
 func do_prestige_with_relic(relic_id: String) -> bool:
 	if not can_prestige():
 		toast.emit("Atteins le niveau %d pour débloquer le Prestige." % prestige_level_required())
 		return false
-	if not _RELIC_DEFS.has(relic_id):
+	var wants_relic := not relic_id.is_empty()
+	if wants_relic and not _RELIC_DEFS.has(relic_id):
 		toast.emit("Relique invalide.")
 		return false
 	var points := calc_prestige_points_gain()
 	prestige_keep_pc = has_skill("xp_prestige_prep")
 	prestige_points += points
 	prestige_level += 1
-	var granted := grant_relic_from_draft(relic_id)
+	var granted := false
+	if wants_relic:
+		granted = grant_relic_from_draft(relic_id)
 	prestige_points_changed.emit(prestige_points)
 	toast.emit("+%d points de prestige !" % points)
 	_reset_run(true)
@@ -2117,6 +2331,9 @@ func hard_reset_game() -> void:
 	prestige_keep_pc = false
 	tutorial_step = TUTORIAL_ACTIVE
 	tutorial_grow_seen = false
+	terrain_edit_seen = false
+	skill_tree_intro_seen = false
+	relics_intro_seen = false
 	run_stats = _empty_stats()
 	lifetime_stats = _empty_stats()
 	board_quests.clear()
@@ -2142,7 +2359,7 @@ func debug_add_money(amount: int) -> void:
 	if amount == 0:
 		return
 	add_money(amount)
-	toast.emit("[Debug] Or %+d → %d" % [amount, money])
+	toast.emit("[Debug] Or %+d \u2192 %d" % [amount, money])
 	save_game()
 
 
@@ -2162,7 +2379,7 @@ func debug_add_xp(amount: int) -> void:
 	level_changed.emit(player_level, skill_points)
 	prestige_ready_changed.emit(can_prestige())
 	if levels > 0:
-		toast.emit("[Debug] +%d XP · +%d niv. → nv.%d (%d PC)" % [amount, levels, player_level, skill_points])
+		toast.emit("[Debug] +%d XP · +%d niv. \u2192 nv.%d (%d PC)" % [amount, levels, player_level, skill_points])
 	else:
 		toast.emit("[Debug] +%d XP" % amount)
 	save_game()
@@ -2185,7 +2402,7 @@ func debug_set_player_level(target: int) -> void:
 	xp_changed.emit(xp, xp_required)
 	level_changed.emit(player_level, skill_points)
 	prestige_ready_changed.emit(can_prestige())
-	toast.emit("[Debug] Niveau → %d (%d PC)" % [player_level, skill_points])
+	toast.emit("[Debug] Niveau \u2192 %d (%d PC)" % [player_level, skill_points])
 	save_game()
 
 
@@ -2194,7 +2411,7 @@ func debug_add_skill_points(amount: int) -> void:
 		return
 	skill_points = maxi(0, skill_points + amount)
 	level_changed.emit(player_level, skill_points)
-	toast.emit("[Debug] PC %+d → %d" % [amount, skill_points])
+	toast.emit("[Debug] PC %+d \u2192 %d" % [amount, skill_points])
 	save_game()
 
 
@@ -2203,14 +2420,14 @@ func debug_add_prestige_points(amount: int) -> void:
 		return
 	prestige_points = maxi(0, prestige_points + amount)
 	prestige_points_changed.emit(prestige_points)
-	toast.emit("[Debug] Pts prestige %+d → %d" % [amount, prestige_points])
+	toast.emit("[Debug] Pts prestige %+d \u2192 %d" % [amount, prestige_points])
 	save_game()
 
 
 func debug_set_prestige_level(level: int) -> void:
 	prestige_level = maxi(0, level)
 	prestige_ready_changed.emit(can_prestige())
-	toast.emit("[Debug] Prestige → P%d" % prestige_level)
+	toast.emit("[Debug] Prestige \u2192 P%d" % prestige_level)
 	_clamp_selected_crop()
 	plots_changed.emit()
 	stock_changed.emit()
@@ -2251,7 +2468,7 @@ func debug_grant_relic(relic_id: String, to_level: int = 1) -> void:
 		relic_levels[relic_id] = to_level
 	relics_changed.emit()
 	## deep_roots peut changer le départ — pas de reset run ici
-	toast.emit("[Debug] %s → niv.%d" % [_RELIC_DEFS[relic_id].get("title", relic_id), to_level])
+	toast.emit("[Debug] %s \u2192 niv.%d" % [_RELIC_DEFS[relic_id].get("title", relic_id), to_level])
 	save_game()
 
 
@@ -2330,30 +2547,14 @@ func roll_relic() -> String:
 
 
 func build_relic_draft(count: int = 3) -> Array[String]:
+	## Uniquement des reliques jamais obtenues (pas de doublon / upgrade via draft).
 	var unowned: Array[String] = []
-	var owned_up: Array[String] = []
-	var owned_max: Array[String] = []
 	for id in _RELIC_ORDER:
-		var lvl := get_relic_level(id)
-		if lvl <= 0:
+		if get_relic_level(id) <= 0:
 			unowned.append(id)
-		elif lvl < RELIC_MAX_LEVEL:
-			owned_up.append(id)
-		else:
-			owned_max.append(id)
 	unowned.shuffle()
-	owned_up.shuffle()
-	owned_max.shuffle()
 	var out: Array[String] = []
 	for id in unowned:
-		if out.size() >= count:
-			break
-		out.append(id)
-	for id in owned_up:
-		if out.size() >= count:
-			break
-		out.append(id)
-	for id in owned_max:
 		if out.size() >= count:
 			break
 		out.append(id)
@@ -2989,6 +3190,7 @@ func save_game() -> void:
 		"delivery_owned": delivery_owned,
 		"terrain_edit_seen": terrain_edit_seen,
 		"skill_tree_intro_seen": skill_tree_intro_seen,
+		"relics_intro_seen": relics_intro_seen,
 		"skills_owned": skills_owned.duplicate(),
 		"free_refuses_left": free_refuses_left,
 		"combo_overflow_gained": combo_overflow_gained,
@@ -3054,6 +3256,8 @@ func load_game() -> bool:
 	delivery_owned = clampi(int(data.get("delivery_owned", 0)), 0, DELIVERY_MAX)
 	terrain_edit_seen = bool(data.get("terrain_edit_seen", false))
 	skill_tree_intro_seen = bool(data.get("skill_tree_intro_seen", false))
+	## Si deja prestige avant cette version : ne pas reforcer le tuto reliques.
+	relics_intro_seen = bool(data.get("relics_intro_seen", prestige_level > 0))
 	skills_owned.clear()
 	var owned = data.get("skills_owned", {})
 	if typeof(owned) == TYPE_DICTIONARY:

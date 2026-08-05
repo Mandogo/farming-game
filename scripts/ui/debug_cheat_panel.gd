@@ -96,7 +96,7 @@ func _build() -> void:
 
 	root.add_child(_row([
 		_btn("+5 PC", func(): _run(func(): GameState.debug_add_skill_points(5))),
-		_btn("Nv. → prestige", func(): _run(func(): GameState.debug_set_player_level(GameState.prestige_level_required()))),
+		_btn("Nv. \u2192 prestige", func(): _run(func(): GameState.debug_set_player_level(GameState.prestige_level_required()))),
 	]))
 
 	root.add_child(_sep("Prestige / meta"))
@@ -106,10 +106,10 @@ func _build() -> void:
 		_btn("P +1", func(): _run(func(): GameState.debug_add_prestige_level(1))),
 	]))
 	root.add_child(_row([
-		_btn("→ P1", func(): _run(func(): GameState.debug_set_prestige_level(1))),
-		_btn("→ P3", func(): _run(func(): GameState.debug_set_prestige_level(3))),
-		_btn("→ P6", func(): _run(func(): GameState.debug_set_prestige_level(6))),
-		_btn("→ P10", func(): _run(func(): GameState.debug_set_prestige_level(10))),
+		_btn("\u2192 P1", func(): _run(func(): GameState.debug_set_prestige_level(1))),
+		_btn("\u2192 P3", func(): _run(func(): GameState.debug_set_prestige_level(3))),
+		_btn("\u2192 P6", func(): _run(func(): GameState.debug_set_prestige_level(6))),
+		_btn("\u2192 P10", func(): _run(func(): GameState.debug_set_prestige_level(10))),
 	]))
 	root.add_child(_row([
 		_btn("Reliques max", func(): _run(func(): GameState.debug_grant_all_relics(GameState.RELIC_MAX_LEVEL))),
