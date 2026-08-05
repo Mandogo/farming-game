@@ -22,7 +22,16 @@ Sans ça, le workflow plante avec `Get Pages site failed / Not Found`.
    Copy-Item -Force web_export\crops_express_idle.html web_export\index.html
    ```
 3. Commit + push `web_export/` → le workflow **Deploy GitHub Pages** publie le site.  
+   Le workflow **écrase toujours** `index.html` avec `crops_express_idle.html` (évite une vieille version PWA).  
    Ou lance manuellement : Actions → Deploy GitHub Pages → Run workflow.
+
+### Téléphone toujours en ancienne version ?
+
+Le service worker Godot met le jeu en cache (PWA). Après un déploiement :
+
+- **Safari iOS** : Réglages → Safari → Effacer historique et données du site (ou ouvrir le lien en onglet privé une fois), puis ré-ajouter à l’écran d’accueil.
+- **Chrome Android** : menu du site → Infos sur le site → Stockage → Effacer / Désinstaller l’appli web, puis recharger [le site](https://mandogo.github.io/farming-game/).
+- Ou ouvrir : `https://mandogo.github.io/farming-game/?v=` + date du jour pour forcer un refresh.
 
 ## Mobile
 
