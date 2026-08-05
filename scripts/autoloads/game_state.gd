@@ -112,6 +112,11 @@ var gardener_owned: int = 0
 var delivery_owned: int = 0
 var _gardener_timer: float = 0.0
 var terrain_edit_seen: bool = false
+## Tuto "ouvre l'arbre de competences" apres le 1er level-up.
+var skill_tree_intro_seen: bool = false
+## Derniers gains d'une livraison (pour FX UI).
+var _last_claim_money: int = 0
+var _last_claim_xp: int = 0
 ## Cache couverture fertiliseur (rebuild lazy).
 var _fert_cover_dirty: bool = true
 var _fert_cover: PackedFloat32Array = PackedFloat32Array()
@@ -567,8 +572,8 @@ func land_unplaced() -> int:
 
 
 func is_terrain_edit_unlocked() -> bool:
-	## Bouton Éditer : après le 1er achat de parcelle (au-delà du départ de run).
-	return unlocked_plots > start_plots()
+	## Bouton Editer : a partir de la 10e parcelle possedee.
+	return unlocked_plots >= 10
 
 
 func _auto_place_one_land() -> bool:
@@ -996,7 +1001,7 @@ func spend_money(amount: int) -> bool:
 	return true
 
 
-func add_xp(amount: int) -> void:
+func add_xp(amount: int, celebrate: bool = true) -> void:
 	if amount <= 0:
 		return
 	xp += amount
@@ -1005,10 +1010,15 @@ func add_xp(amount: int) -> void:
 		player_level += 1
 		skill_points += 1
 		xp_required = _xp_for_player_level(player_level)
-		toast.emit("Niveau %d ! +1 Point de Compétence" % player_level)
+		if celebrate:
+			toast.emit("Niveau %d ! +1 Point de Compétence" % player_level)
 	xp_changed.emit(xp, xp_required)
 	level_changed.emit(player_level, skill_points)
 	prestige_ready_changed.emit(can_prestige())
+
+
+func xp_required_for_level(level: int) -> int:
+	return _xp_for_player_level(level)
 
 
 func plant_on_plot(index: int) -> bool:
@@ -1270,7 +1280,7 @@ func range_overlay_flags(index: int) -> Dictionary:
 	return flags
 
 
-func try_deliver_order(order_id: String, silent: bool = false) -> bool:
+func try_deliver_order(order_id: String, silent: bool = false, emit_missions: bool = true) -> bool:
 	for m in missions:
 		if m.id != order_id:
 			continue
@@ -1284,9 +1294,17 @@ func try_deliver_order(order_id: String, silent: bool = false) -> bool:
 				if not silent:
 					toast.emit("Erreur inventaire.")
 				return false
-		_claim_order(m, silent)
+		_claim_order(m, silent, emit_missions)
 		return true
 	return false
+
+
+func notify_missions_changed() -> void:
+	missions_changed.emit()
+
+
+func get_last_claim_rewards() -> Vector2i:
+	return Vector2i(_last_claim_money, _last_claim_xp)
 
 
 func cancel_order(order_id: String) -> bool:
@@ -1297,23 +1315,27 @@ func cancel_order(order_id: String) -> bool:
 		if is_tutorial_order(m):
 			toast.emit("Termine d'abord la commande tutoriel.")
 			return false
+		var slot := m.board_slot
 		missions.remove_at(i)
 		if free_refuses_left > 0:
 			free_refuses_left -= 1
 			toast.emit("Refus gratuit — prochaine commande bientôt.")
 			_refill_orders()
 		else:
-			_queue_order_refresh("refused")
+			_queue_order_refresh("refused", slot)
 			toast.emit("Commande refusee — prochaine dans %ds." % int(order_refresh_sec()))
 		missions_changed.emit()
 		return true
 	return false
 
 
-func _queue_order_refresh(reason: String) -> void:
+func _queue_order_refresh(reason: String, board_slot: int = -1) -> void:
+	if board_slot < 0:
+		board_slot = _next_free_board_slot()
 	order_refresh_slots.append({
 		"time": order_refresh_sec(),
 		"reason": reason,
+		"board_slot": board_slot,
 	})
 
 
@@ -1325,8 +1347,9 @@ func _tick_order_refresh(delta: float) -> void:
 	while i < order_refresh_slots.size():
 		order_refresh_slots[i]["time"] = float(order_refresh_slots[i]["time"]) - delta
 		if float(order_refresh_slots[i]["time"]) <= 0.0:
+			var preferred := int(order_refresh_slots[i].get("board_slot", -1))
 			order_refresh_slots.remove_at(i)
-			if _push_order():
+			if _push_order(preferred):
 				changed = true
 		else:
 			i += 1
@@ -1334,15 +1357,17 @@ func _tick_order_refresh(delta: float) -> void:
 		missions_changed.emit()
 
 
-func _claim_order(m: MissionData, silent: bool = false) -> void:
+func _claim_order(m: MissionData, silent: bool = false, emit_missions: bool = true) -> void:
 	var money_gain := maxi(1, int(m.coin_reward * mission_money_mult()))
 	var xp_gain := maxi(1, int(m.xp_reward * mission_xp_mult()))
 	var tip := false
 	if has_skill("money_crit") and randf() < 0.10:
 		money_gain *= 2
 		tip = true
+	_last_claim_money = money_gain
+	_last_claim_xp = xp_gain
 	add_money(money_gain)
-	add_xp(xp_gain)
+	add_xp(xp_gain, not silent)
 	_track_stat("orders", 1)
 	_track_stat("gold_orders", money_gain)
 	if not silent:
@@ -1351,6 +1376,7 @@ func _claim_order(m: MissionData, silent: bool = false) -> void:
 			m.client_name, m.trait_label(), money_gain, xp_gain, tip_txt
 		])
 	var was_tutorial := is_tutorial_order(m)
+	var freed_slot := m.board_slot
 	var remaining: Array[MissionData] = []
 	for o in missions:
 		if o.id != m.id:
@@ -1360,8 +1386,9 @@ func _claim_order(m: MissionData, silent: bool = false) -> void:
 	if was_tutorial and not is_tutorial_done():
 		_advance_tutorial_on_deliver()
 	else:
-		_refill_orders()
-	missions_changed.emit()
+		_refill_orders(freed_slot)
+	if emit_missions:
+		missions_changed.emit()
 
 
 func _register_delivery_for_combo() -> void:
@@ -1381,7 +1408,8 @@ func _register_delivery_for_combo() -> void:
 		combo_count = 0
 		combo_window_left = 0.0
 		combo_boost_left = combo_boost_duration_sec()
-		combo_cooldown_left = combo_cooldown_sec()
+		## Le cooldown demarre a la fin du bonus (voir _tick_combo_boost).
+		combo_cooldown_left = 0.0
 		combo_overflow_gained = 0.0
 		toast.emit("Combo ! Pousse x%.1f pendant %ds" % [
 			combo_boost_mult(), int(combo_boost_duration_sec())
@@ -1397,7 +1425,10 @@ func _tick_combo_boost(delta: float) -> void:
 
 	if combo_boost_left > 0.0:
 		combo_boost_left = maxf(0.0, combo_boost_left - delta)
-	if combo_cooldown_left > 0.0:
+		## Debut du CD uniquement quand le bonus vient de se terminer.
+		if was_active and combo_boost_left <= 0.0:
+			combo_cooldown_left = combo_cooldown_sec()
+	elif combo_cooldown_left > 0.0:
 		combo_cooldown_left = maxf(0.0, combo_cooldown_left - delta)
 	if combo_window_left > 0.0 and combo_boost_left <= 0.0:
 		combo_window_left = maxf(0.0, combo_window_left - delta)
@@ -1795,13 +1826,15 @@ func buy_boost(boost_id: String) -> bool:
 			if unlocked_plots >= MAX_PLOTS:
 				add_money(cost)
 				return false
-			var first_extra := unlocked_plots <= start_plots()
 			if not unlock_next_plot():
 				add_money(cost)
 				return false
 			_sync_plot_boost_cost()
-			toast.emit("Parcelle placée (%d/%d) — réorganise via Éditer si tu veux." % [land_placed(), unlocked_plots])
-			if first_extra and not terrain_edit_seen:
+			if is_terrain_edit_unlocked():
+				toast.emit("Parcelle placee (%d/%d) — Editer pour reorganiser." % [land_placed(), unlocked_plots])
+			else:
+				toast.emit("Parcelle placee (%d/%d)." % [land_placed(), unlocked_plots])
+			if unlocked_plots >= 10 and not terrain_edit_seen:
 				tutorial_nudge.emit(&"terrain_edit")
 		_:
 			add_money(cost)
@@ -2440,7 +2473,7 @@ func _tick_order_timers(delta: float) -> void:
 			if is_tutorial_order(m):
 				lost_tutorial = true
 			else:
-				_queue_order_refresh("failed")
+				_queue_order_refresh("failed", m.board_slot)
 			changed = true
 			continue
 		kept.append(m)
@@ -2462,7 +2495,7 @@ func _refill_missions() -> void:
 	missions_changed.emit()
 
 
-func _refill_orders() -> void:
+func _refill_orders(preferred_slot: int = -1) -> void:
 	if not is_tutorial_done():
 		## Tuto : une seule commande (Tuteur), rien d'autre.
 		order_refresh_slots.clear()
@@ -2475,9 +2508,12 @@ func _refill_orders() -> void:
 		return
 	var guard := 0
 	var cap := max_active_missions()
+	var first_push := true
 	while _active_order_count() + order_refresh_slots.size() < cap and guard < 10:
 		guard += 1
-		if not _push_order():
+		var prefer := preferred_slot if first_push else -1
+		first_push = false
+		if not _push_order(prefer):
 			break
 
 
@@ -2500,6 +2536,7 @@ func _push_tutorial_order() -> bool:
 		MissionData.TRAIT_IMPATIENT,
 		TUTORIAL_ORDER_DURATION
 	)
+	m.board_slot = 0
 	missions.append(m)
 	return true
 
@@ -2582,7 +2619,7 @@ func _reward_for_reqs(reqs: Dictionary, trait_id: StringName) -> Vector2i:
 	return Vector2i(coins, xp_r)
 
 
-func _push_order() -> bool:
+func _push_order(preferred_slot: int = -1) -> bool:
 	if not is_tutorial_done():
 		return _push_tutorial_order()
 	if _active_order_count() >= max_active_missions():
@@ -2611,8 +2648,76 @@ func _push_order() -> bool:
 		trait_id,
 		duration
 	)
+	if preferred_slot >= 0 and _is_board_slot_free(preferred_slot):
+		m.board_slot = preferred_slot
+	else:
+		m.board_slot = _next_free_board_slot()
 	missions.append(m)
 	return true
+
+
+func _used_board_slots() -> Dictionary:
+	var used: Dictionary = {}
+	for m in missions:
+		if m.board_slot >= 0:
+			used[m.board_slot] = true
+	for s in order_refresh_slots:
+		var bs := int(s.get("board_slot", -1))
+		if bs >= 0:
+			used[bs] = true
+	return used
+
+
+func _is_board_slot_free(slot: int) -> bool:
+	return not _used_board_slots().has(slot)
+
+
+func _next_free_board_slot() -> int:
+	var used := _used_board_slots()
+	var cap := maxi(1, max_active_missions())
+	for i in cap:
+		if not used.has(i):
+			return i
+	## Fallback : apres le max utilise.
+	var highest := -1
+	for k in used.keys():
+		highest = maxi(highest, int(k))
+	return highest + 1
+
+
+func ensure_board_slots_assigned() -> void:
+	## Migre les saves / etats sans board_slot.
+	var used: Dictionary = {}
+	for m in missions:
+		if m.board_slot >= 0:
+			if used.has(m.board_slot):
+				m.board_slot = -1
+			else:
+				used[m.board_slot] = true
+	for s in order_refresh_slots:
+		var bs := int(s.get("board_slot", -1))
+		if bs >= 0:
+			if used.has(bs):
+				s["board_slot"] = -1
+			else:
+				used[bs] = true
+	var next_i := 0
+	for m in missions:
+		if m.board_slot >= 0:
+			continue
+		while used.has(next_i):
+			next_i += 1
+		m.board_slot = next_i
+		used[next_i] = true
+		next_i += 1
+	for s in order_refresh_slots:
+		if int(s.get("board_slot", -1)) >= 0:
+			continue
+		while used.has(next_i):
+			next_i += 1
+		s["board_slot"] = next_i
+		used[next_i] = true
+		next_i += 1
 
 
 func plot_progress(index: int) -> float:
@@ -2883,6 +2988,7 @@ func save_game() -> void:
 		"gardener_owned": gardener_owned,
 		"delivery_owned": delivery_owned,
 		"terrain_edit_seen": terrain_edit_seen,
+		"skill_tree_intro_seen": skill_tree_intro_seen,
 		"skills_owned": skills_owned.duplicate(),
 		"free_refuses_left": free_refuses_left,
 		"combo_overflow_gained": combo_overflow_gained,
@@ -2947,6 +3053,7 @@ func load_game() -> bool:
 	gardener_owned = clampi(int(data.get("gardener_owned", 0)), 0, GARDENER_MAX)
 	delivery_owned = clampi(int(data.get("delivery_owned", 0)), 0, DELIVERY_MAX)
 	terrain_edit_seen = bool(data.get("terrain_edit_seen", false))
+	skill_tree_intro_seen = bool(data.get("skill_tree_intro_seen", false))
 	skills_owned.clear()
 	var owned = data.get("skills_owned", {})
 	if typeof(owned) == TYPE_DICTIONARY:
@@ -3053,10 +3160,14 @@ func load_game() -> bool:
 	order_refresh_slots = data.get("order_refresh_slots", [])
 	if typeof(order_refresh_slots) != TYPE_ARRAY:
 		order_refresh_slots = []
+	ensure_board_slots_assigned()
 	combo_count = int(data.get("combo_count", 0))
 	combo_window_left = float(data.get("combo_window_left", 0.0))
 	combo_boost_left = float(data.get("combo_boost_left", 0.0))
 	combo_cooldown_left = float(data.get("combo_cooldown_left", 0.0))
+	## Ancien save : le CD tournait pendant le bonus — on le reporte a la fin.
+	if combo_boost_left > 0.0:
+		combo_cooldown_left = 0.0
 	run_stats = _empty_stats()
 	lifetime_stats = _empty_stats()
 	var rs = data.get("run_stats", {})
@@ -3186,6 +3297,7 @@ func _missions_to_save() -> Array:
 			"trait": String(m.client_trait),
 			"time_left": m.time_left,
 			"time_max": m.time_max,
+			"board_slot": m.board_slot,
 		})
 	return out
 
@@ -3216,4 +3328,5 @@ func _missions_from_save(arr) -> void:
 			float(item.get("time_max", ORDER_DURATION))
 		)
 		m.time_left = float(item.get("time_left", m.time_max))
+		m.board_slot = int(item.get("board_slot", -1))
 		missions.append(m)

@@ -29,8 +29,8 @@ static func build() -> Theme:
 	theme.set_constant("outline_size", "Label", 0)
 	theme.set_color("font_outline_color", "Label", Color(0, 0, 0, 0))
 
-	theme.set_stylebox("panel", "PanelContainer", _flat(panel_bg, panel_border, 14, 1, 12, 6, Vector2(0, 2)))
-	theme.set_stylebox("panel", "Panel", _flat(panel_bg_soft, panel_border, 12, 1, 10, 5, Vector2(0, 2)))
+	theme.set_stylebox("panel", "PanelContainer", _flat(panel_bg, panel_border, 14, 1, 12, 2, Vector2(0, 1)))
+	theme.set_stylebox("panel", "Panel", _flat(panel_bg_soft, panel_border, 12, 1, 10, 2, Vector2(0, 1)))
 
 	theme.set_stylebox("normal", "Button", _glass_btn(btn_glass, btn_border, btn_shadow, 10, 4, Vector2(0, 2)))
 	theme.set_stylebox("hover", "Button", _glass_btn(btn_glass_hover, Color(0.25, 0.35, 0.28, 0.16), btn_shadow, 10, 5, Vector2(0, 2)))
@@ -73,27 +73,27 @@ static func build() -> Theme:
 	theme.set_stylebox("fill", "ProgressBar", bar_fill)
 	theme.set_color("font_color", "ProgressBar", text)
 
-	var chip := _flat(Color(0.88, 0.86, 0.72, 0.95), Color(0.72, 0.58, 0.24, 0.70), 12, 1, 10, 4, Vector2(0, 2))
+	var chip := _flat(Color(0.88, 0.86, 0.72, 0.95), Color(0.72, 0.58, 0.24, 0.70), 12, 1, 10, 2, Vector2(0, 1))
 	theme.set_stylebox("panel", "Chip", chip)
 
-	var card := _flat(Color(0.82, 0.89, 0.83, 0.94), Color(0.42, 0.58, 0.46, 0.42), 12, 1, 8, 4, Vector2(0, 2))
+	var card := _flat(Color(0.82, 0.89, 0.83, 0.94), Color(0.42, 0.58, 0.46, 0.42), 12, 1, 8, 2, Vector2(0, 1))
 	theme.set_stylebox("panel", "Card", card)
 
-	var seed_card := _flat(Color(0.76, 0.85, 0.78, 0.96), Color(0.42, 0.60, 0.46, 0.50), 12, 1, 8, 4, Vector2(0, 2))
+	var seed_card := _flat(Color(0.76, 0.85, 0.78, 0.96), Color(0.42, 0.60, 0.46, 0.50), 12, 1, 8, 0, Vector2.ZERO)
 	theme.set_stylebox("panel", "SeedCard", seed_card)
 
-	var inv_panel := _flat(Color(0.78, 0.86, 0.80, 0.96), Color(0.45, 0.65, 0.42, 0.50), 12, 1, 8, 4, Vector2(0, 2))
+	var inv_panel := _flat(Color(0.78, 0.86, 0.80, 0.96), Color(0.45, 0.65, 0.42, 0.50), 12, 1, 8, 2, Vector2(0, 1))
 	theme.set_stylebox("panel", "InvPanel", inv_panel)
 
-	var inv_slot := _flat(Color(0.68, 0.78, 0.70, 0.95), Color(0.45, 0.58, 0.48, 0.45), 8, 1, 4, 2, Vector2(0, 1))
+	var inv_slot := _flat(Color(0.68, 0.78, 0.70, 0.95), Color(0.45, 0.58, 0.48, 0.45), 8, 1, 4, 0, Vector2.ZERO)
 	theme.set_stylebox("panel", "InvSlot", inv_slot)
 
-	var keycap := _flat(Color(0.68, 0.78, 0.70, 0.98), Color(0.45, 0.62, 0.38, 0.80), 6, 1, 3, 1, Vector2(0, 1))
+	var keycap := _flat(Color(0.68, 0.78, 0.70, 0.98), Color(0.45, 0.62, 0.38, 0.80), 6, 1, 3, 0, Vector2.ZERO)
 	theme.set_stylebox("panel", "Keycap", keycap)
 
 	# Rush = corail doux
-	var rush_card := _flat(Color(0.90, 0.82, 0.76, 0.96), Color(0.82, 0.42, 0.30, 0.80), 10, 2, 8, 4, Vector2(0, 2))
-	rush_card.shadow_color = Color(0.55, 0.25, 0.15, 0.18)
+	var rush_card := _flat(Color(0.90, 0.82, 0.76, 0.96), Color(0.82, 0.42, 0.30, 0.80), 10, 2, 8, 2, Vector2(0, 1))
+	rush_card.shadow_color = Color(0.55, 0.25, 0.15, 0.12)
 	theme.set_stylebox("panel", "RushCard", rush_card)
 
 	var rush_bar_bg := _flat(Color(0.82, 0.74, 0.70, 0.95), Color(0.72, 0.45, 0.35, 0.45), 8, 1, 2, 1, Vector2(0, 1))
@@ -219,7 +219,9 @@ static func _flat(
 	s.set_border_width_all(border_w)
 	s.set_corner_radius_all(radius)
 	s.set_content_margin_all(content_margin)
-	s.shadow_color = Color(0.12, 0.18, 0.12, 0.16)
+	s.anti_aliasing = true
+	## Ombre douce et courte : une ombre forte + clip_contents = coins "carres" moches.
+	s.shadow_color = Color(0.12, 0.18, 0.12, 0.12 if shadow_size > 0 else 0.0)
 	s.shadow_size = shadow_size
 	s.shadow_offset = shadow_offset
 	return s

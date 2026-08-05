@@ -376,7 +376,7 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_stretch_ratio = 0.48
 size_flags_vertical = 3
-theme_override_constants/separation = 8
+theme_override_constants/separation = 4
 clip_contents = true
 
 [node name="NextHint" type="Label" parent="Root/Body/Center" unique_id=1146777816]
@@ -421,7 +421,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_override_constants/margin_left = 10
-theme_override_constants/margin_top = 42
+theme_override_constants/margin_top = 78
 theme_override_constants/margin_right = 10
 theme_override_constants/margin_bottom = 10
 
@@ -460,32 +460,65 @@ text = "0"
 unique_name_in_owner = true
 visible = false
 layout_mode = 1
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -150.0
+anchors_preset = 0
+anchor_left = 0.0
+anchor_right = 0.0
+offset_left = 10.0
 offset_top = 8.0
-offset_right = -10.0
-offset_bottom = 44.0
+offset_right = 118.0
+offset_bottom = 72.0
 grow_horizontal = 0
 
-[node name="ComboBoostRow" type="HBoxContainer" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip"]
+[node name="ComboBoostBody" type="VBoxContainer" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip"]
 layout_mode = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 3
 
-[node name="ComboBoostIcon" type="TextureRect" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostRow"]
+[node name="ComboBoostTimerRow" type="HBoxContainer" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostBody"]
+layout_mode = 2
+theme_override_constants/separation = 4
+alignment = 1
+
+[node name="ComboBoostTimerIcon" type="TextureRect" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostBody/ComboBoostTimerRow"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(24, 24)
+custom_minimum_size = Vector2(18, 18)
 layout_mode = 2
 expand_mode = 1
 stretch_mode = 5
 texture_filter = 4
 
-[node name="ComboBoostLabel" type="Label" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostRow"]
+[node name="ComboBoostTimerLabel" type="Label" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostBody/ComboBoostTimerRow"]
 unique_name_in_owner = true
 layout_mode = 2
-theme_override_font_sizes/font_size = 14
-text = "x2 30s"
+theme_override_font_sizes/font_size = 13
+text = "30s"
+
+[node name="ComboBoostBar" type="ProgressBar" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostBody"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 5)
+layout_mode = 2
+size_flags_horizontal = 3
+max_value = 1.0
+value = 1.0
+show_percentage = false
+
+[node name="ComboBoostEffectRow" type="HBoxContainer" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostBody"]
+layout_mode = 2
+theme_override_constants/separation = 4
+alignment = 1
+
+[node name="ComboBoostIcon" type="TextureRect" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostBody/ComboBoostEffectRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(28, 28)
+layout_mode = 2
+expand_mode = 1
+stretch_mode = 5
+texture_filter = 4
+
+[node name="ComboBoostLabel" type="Label" parent="Root/Body/Center/FieldFrame/FieldStack/ComboBoostChip/ComboBoostBody/ComboBoostEffectRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_font_sizes/font_size = 16
+text = "x2"
 
 [node name="ToastLabel" type="Label" parent="Root/Body/Center" unique_id=776857126]
 unique_name_in_owner = true
@@ -496,20 +529,20 @@ horizontal_alignment = 1
 
 [node name="SeedPanel" type="PanelContainer" parent="Root/Body/Center" unique_id=841268378]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 118)
+custom_minimum_size = Vector2(0, 148)
 layout_mode = 2
-clip_contents = true
+clip_contents = false
 
 [node name="SeedMargin" type="MarginContainer" parent="Root/Body/Center/SeedPanel" unique_id=599200390]
 layout_mode = 2
-theme_override_constants/margin_left = 10
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 10
-theme_override_constants/margin_bottom = 8
+theme_override_constants/margin_left = 8
+theme_override_constants/margin_top = 6
+theme_override_constants/margin_right = 8
+theme_override_constants/margin_bottom = 6
 
 [node name="SeedVBox" type="VBoxContainer" parent="Root/Body/Center/SeedPanel/SeedMargin" unique_id=1993292060]
 layout_mode = 2
-theme_override_constants/separation = 4
+theme_override_constants/separation = 2
 
 [node name="SeedTitleRow" type="HBoxContainer" parent="Root/Body/Center/SeedPanel/SeedMargin/SeedVBox" unique_id=44926597]
 layout_mode = 2
@@ -529,7 +562,7 @@ text = "Graine selectionnee"
 
 [node name="SeedScroll" type="ScrollContainer" parent="Root/Body/Center/SeedPanel/SeedMargin/SeedVBox"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 92)
+custom_minimum_size = Vector2(0, 128)
 layout_mode = 2
 size_flags_horizontal = 3
 horizontal_scroll_mode = 0

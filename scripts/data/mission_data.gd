@@ -17,6 +17,8 @@ var client_trait: StringName = TRAIT_GOURMAND
 var time_left: float = 0.0
 var time_max: float = 0.0
 var client_face: int = 0
+## Emplacement stable dans la liste (0..cap-1) — survit aux echecs / refresh.
+var board_slot: int = -1
 
 
 func _init(

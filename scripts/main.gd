@@ -79,6 +79,16 @@ var _field_zoom: float = 1.0
 var _hovered_plot: PlotTile = null
 var _tutorial_mode: StringName = &""
 var _last_tutorial_nudge: StringName = &""
+var _xp_anim_lock: bool = false
+var _hud_player_level: int = 1
+var _pending_card_enter_slots: Dictionary = {}
+var _card_enter_scheduled: bool = false
+var _entering_board_slots: Dictionary = {}
+## Placeholders de hauteur pendant slide out -> slide in (evite que les autres cards remontent).
+var _slot_holders: Dictionary = {}
+## Rect global cible du slot (mesure avant slide) pour une entree precise.
+var _slot_enter_targets: Dictionary = {}
+var _skill_tree_tuto_active: bool = false
 var _skill_tip: PanelContainer = null
 var _skill_tip_skill_id: String = ""
 var _skill_tip_anchor: Control = null
@@ -91,6 +101,13 @@ var _combo_segments: Array = []
 var _combo_window_bar: ProgressBar = null
 var _combo_markers_row: Control = null
 var _combo_panel_built: bool = false
+var _combo_boost_peak: float = 0.0
+var _combo_panel: PanelContainer = null
+var _combo_cd_row: HBoxContainer = null
+var _combo_cd_icon: TextureRect = null
+var _combo_cd_label: Label = null
+var _combo_cd_bar: ProgressBar = null
+var _combo_info_row: Control = null
 var _tab_buttons: Dictionary = {}
 var _selected_relic_id: String = ""
 var _last_relic_draft: String = ""
@@ -172,7 +189,7 @@ func _boot_tutorial() -> void:
 
 func _setup_settings() -> void:
 	if settings_button:
-		settings_button.tooltip_text = "Parametres"
+		settings_button.tooltip_text = ""
 		settings_button.pressed.connect(_open_settings)
 		_apply_settings_button_icon()
 	if settings_overlay:
@@ -358,7 +375,11 @@ func _apply_panel_styles() -> void:
 	if _theme:
 		var seed_style := _theme.get_stylebox("panel", "SeedCard") as StyleBoxFlat
 		if seed_style and %SeedPanel:
-			%SeedPanel.add_theme_stylebox_override("panel", seed_style)
+			var ssp := seed_style.duplicate() as StyleBoxFlat
+			ssp.shadow_size = 0
+			ssp.shadow_color = Color(0, 0, 0, 0)
+			ssp.anti_aliasing = true
+			%SeedPanel.add_theme_stylebox_override("panel", ssp)
 		var player_bar := get_node_or_null("%PlayerBar") as PanelContainer
 		if player_bar:
 			var top_style := _theme.get_stylebox("panel", "PanelContainer") as StyleBoxFlat
@@ -375,10 +396,19 @@ func _apply_panel_styles() -> void:
 	if _card_style:
 		var left_p := get_node_or_null("%LeftPanel") as PanelContainer
 		var right_p := get_node_or_null("%RightPanel") as PanelContainer
+		## Panneaux clips : sans ombre StyleBox (sinon coins carres).
 		if left_p:
-			left_p.add_theme_stylebox_override("panel", _card_style)
+			var ls := _card_style.duplicate() as StyleBoxFlat
+			ls.shadow_size = 0
+			ls.shadow_color = Color(0, 0, 0, 0)
+			ls.anti_aliasing = true
+			left_p.add_theme_stylebox_override("panel", ls)
 		if right_p:
-			right_p.add_theme_stylebox_override("panel", _card_style)
+			var rs := _card_style.duplicate() as StyleBoxFlat
+			rs.shadow_size = 0
+			rs.shadow_color = Color(0, 0, 0, 0)
+			rs.anti_aliasing = true
+			right_p.add_theme_stylebox_override("panel", rs)
 	_apply_atmosphere()
 
 
@@ -492,7 +522,7 @@ func _load_textures() -> void:
 		"tab_shop", "tab_prestige", "combo", "target",
 		"skill_tree", "click_hand", "lock", "settings",
 		"fertilizer", "gardener", "gardener_claw", "auto_planter", "auto_harvester", "auto_delivery",
-		"player_avatar", "green_thumb", "edit_pen",
+		"player_avatar", "green_thumb", "edit_pen", "hourglass",
 	]
 	for n in ui_keys:
 		var path := "res://assets/textures/ui/%s.png" % n
@@ -545,8 +575,15 @@ func _assign_ui_textures() -> void:
 	var combo_ic := get_node_or_null("%ComboBoostIcon") as TextureRect
 	if combo_ic and _textures.has("ui_shop_speed"):
 		combo_ic.texture = _textures["ui_shop_speed"]
-		combo_ic.custom_minimum_size = Vector2(24, 24)
+		combo_ic.custom_minimum_size = Vector2(28, 28)
 		combo_ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		combo_ic.modulate = Color.WHITE
+	var combo_timer_ic := get_node_or_null("%ComboBoostTimerIcon") as TextureRect
+	if combo_timer_ic and _textures.has("ui_chrono"):
+		combo_timer_ic.texture = _textures["ui_chrono"]
+		combo_timer_ic.custom_minimum_size = Vector2(18, 18)
+		combo_timer_ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		combo_timer_ic.modulate = Color.WHITE
 	_rebuild_stock()
 
 
@@ -807,35 +844,114 @@ func _toggle_debug_cheats() -> void:
 
 
 func _setup_combo_boost_chip() -> void:
-	var chip := get_node_or_null("%ComboBoostChip") as Control
+	var chip := get_node_or_null("%ComboBoostChip") as PanelContainer
 	if chip == null:
 		return
 	chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	chip.custom_minimum_size = Vector2(96, 60)
+	## Style compact, coins nets, sans ombre carree.
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0.90, 0.94, 0.86, 0.96)
+	st.border_color = Color(0.42, 0.62, 0.78, 0.85)
+	st.set_border_width_all(2)
+	st.set_corner_radius_all(12)
+	st.content_margin_left = 8
+	st.content_margin_right = 8
+	st.content_margin_top = 6
+	st.content_margin_bottom = 6
+	st.anti_aliasing = true
+	st.shadow_size = 0
+	chip.add_theme_stylebox_override("panel", st)
+
+	var bar := get_node_or_null("%ComboBoostBar") as ProgressBar
+	if bar:
+		bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		bar.show_percentage = false
+		bar.custom_minimum_size = Vector2(0, 5)
+		var bg := StyleBoxFlat.new()
+		bg.bg_color = Color(0.62, 0.70, 0.66, 0.55)
+		bg.set_corner_radius_all(3)
+		bg.set_content_margin_all(0)
+		bg.anti_aliasing = true
+		var fill := StyleBoxFlat.new()
+		fill.bg_color = Color(0.35, 0.72, 0.95, 1.0)
+		fill.set_corner_radius_all(3)
+		fill.set_content_margin_all(0)
+		fill.anti_aliasing = true
+		bar.add_theme_stylebox_override("background", bg)
+		bar.add_theme_stylebox_override("fill", fill)
+
 	for c in chip.find_children("*", "Control", true, false):
 		(c as Control).mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_refresh_combo_ui()
 
 
+func _format_combo_timer(sec_f: float) -> String:
+	var sec := maxi(0, int(ceil(sec_f)))
+	if sec >= 60:
+		var m := sec / 60
+		var s := sec % 60
+		if s == 0:
+			return "%d min" % m
+		return "%d min %02d s" % [m, s]
+	return "%d s" % maxi(1, sec) if sec_f > 0.0 else "0 s"
+
+
 func _refresh_combo_ui() -> void:
-	var chip := get_node_or_null("%ComboBoostChip") as Control
-	var lab := get_node_or_null("%ComboBoostLabel") as Label
-	if chip and lab:
-		if GameState.combo_boost_left > 0.0:
-			chip.visible = true
-			chip.modulate = Color(1.05, 1.12, 1.0)
-			lab.text = "x%.1f  %ds" % [
-				GameState.combo_boost_mult(),
-				maxi(1, int(ceil(GameState.combo_boost_left))),
-			]
-			lab.modulate = Color(0.22, 0.55, 0.85)
-		elif GameState.combo_cooldown_left > 0.0:
-			chip.visible = true
-			chip.modulate = Color(0.75, 0.78, 0.75, 0.85)
-			var cd := maxi(0, int(ceil(GameState.combo_cooldown_left)))
-			lab.text = "CD %d:%02d" % [cd / 60, cd % 60]
-			lab.modulate = Color(0.45, 0.50, 0.48)
-		else:
-			chip.visible = false
+	var chip := get_node_or_null("%ComboBoostChip") as PanelContainer
+	var timer_l := get_node_or_null("%ComboBoostTimerLabel") as Label
+	var mult_l := get_node_or_null("%ComboBoostLabel") as Label
+	var bar := get_node_or_null("%ComboBoostBar") as ProgressBar
+	var effect_ic := get_node_or_null("%ComboBoostIcon") as TextureRect
+	var timer_ic := get_node_or_null("%ComboBoostTimerIcon") as TextureRect
+	if chip == null:
+		_refresh_combo_panel()
+		_apply_combo_host_cooldown_look()
+		return
+
+	## Chip haut-gauche : uniquement pendant le bonus actif (pas de CD ici).
+	if GameState.combo_boost_left > 0.0:
+		chip.visible = true
+		chip.modulate = Color(1.04, 1.08, 1.02)
+		_combo_boost_peak = maxf(_combo_boost_peak, GameState.combo_boost_left)
+		_combo_boost_peak = maxf(_combo_boost_peak, GameState.combo_boost_duration_sec())
+		var left := GameState.combo_boost_left
+		var mult := GameState.combo_boost_mult()
+		var mult_txt := ("x%d" % int(mult)) if is_equal_approx(mult, roundf(mult)) else ("x%.1f" % mult)
+		if timer_l:
+			timer_l.text = _format_combo_timer(left)
+			timer_l.modulate = Color(0.28, 0.42, 0.36)
+			timer_l.add_theme_font_size_override("font_size", 13)
+		if mult_l:
+			mult_l.text = mult_txt
+			mult_l.modulate = Color(0.16, 0.48, 0.78)
+			mult_l.add_theme_font_size_override("font_size", 17)
+		if bar:
+			bar.visible = true
+			bar.max_value = maxf(_combo_boost_peak, 0.001)
+			bar.value = left
+			var fill := bar.get_theme_stylebox("fill") as StyleBoxFlat
+			if fill:
+				fill = fill.duplicate() as StyleBoxFlat
+				fill.bg_color = Color(0.32, 0.72, 0.98, 1.0)
+				bar.add_theme_stylebox_override("fill", fill)
+		if effect_ic:
+			effect_ic.custom_minimum_size = Vector2(28, 28)
+			effect_ic.modulate = Color.WHITE
+		if timer_ic:
+			timer_ic.custom_minimum_size = Vector2(18, 18)
+			timer_ic.modulate = Color.WHITE
+		var st := chip.get_theme_stylebox("panel") as StyleBoxFlat
+		if st:
+			st = st.duplicate() as StyleBoxFlat
+			st.bg_color = Color(0.88, 0.94, 0.98, 0.97)
+			st.border_color = Color(0.32, 0.62, 0.88, 0.95)
+			st.anti_aliasing = true
+			st.shadow_size = 0
+			chip.add_theme_stylebox_override("panel", st)
+	else:
+		chip.visible = false
+		_combo_boost_peak = 0.0
 
 	_refresh_combo_panel()
 	_apply_combo_host_cooldown_look()
@@ -845,10 +961,8 @@ func _apply_combo_host_cooldown_look() -> void:
 	var host := get_node_or_null("%ComboHost") as Control
 	if host == null:
 		return
-	if GameState.combo_cooldown_left > 0.0 and GameState.combo_boost_left <= 0.0:
-		host.modulate = Color(0.55, 0.55, 0.58, 0.72)
-	else:
-		host.modulate = Color.WHITE
+	## Le grisage fort est gere dans le panneau (bandeau sablier) : host reste lisible.
+	host.modulate = Color.WHITE
 
 
 func _refresh_combo_panel() -> void:
@@ -856,47 +970,49 @@ func _refresh_combo_panel() -> void:
 		return
 
 	var prog := GameState.combo_progress()
+	var on_cd := GameState.combo_cooldown_left > 0.0 and GameState.combo_boost_left <= 0.0
+	var on_boost := GameState.combo_boost_left > 0.0
+	var show_status_slot := on_cd or on_boost
+
+	## Cases OU bandeau statut (meme emplacement, pas les deux).
+	if _combo_markers_row != null and is_instance_valid(_combo_markers_row):
+		_combo_markers_row.visible = not show_status_slot
+	if _combo_cd_row != null and is_instance_valid(_combo_cd_row):
+		_combo_cd_row.visible = show_status_slot
 
 	for i in _combo_segments.size():
 		var seg: PanelContainer = _combo_segments[i]
 		if not is_instance_valid(seg):
 			continue
-		var on_cd := GameState.combo_cooldown_left > 0.0 and GameState.combo_boost_left <= 0.0
-		var filled := (not on_cd) and (GameState.combo_boost_left > 0.0 or i < prog)
+		var filled := (not on_cd) and (not on_boost) and (i < prog)
+		## Pendant boost on peut aussi afficher toutes cochees si on veut, mais la row est cachee.
+		if on_boost:
+			filled = true
 		var st := StyleBoxFlat.new()
 		st.set_corner_radius_all(6)
 		st.set_content_margin_all(0)
 		st.set_border_width_all(2)
-		if on_cd:
-			st.bg_color = Color(0.48, 0.50, 0.52, 0.55)
-			st.border_color = Color(0.38, 0.40, 0.42, 0.60)
-		elif GameState.combo_boost_left > 0.0:
-			st.bg_color = Color(0.42, 0.72, 0.95, 1.0)
-			st.border_color = Color(0.22, 0.48, 0.78, 1.0)
-		elif filled:
+		st.anti_aliasing = true
+		if filled:
 			st.bg_color = Color(0.42, 0.78, 0.48, 1.0)
 			st.border_color = Color(0.22, 0.55, 0.30, 1.0)
 		else:
 			st.bg_color = Color(0.68, 0.76, 0.70, 0.65)
 			st.border_color = Color(0.45, 0.55, 0.48, 0.70)
 		seg.add_theme_stylebox_override("panel", st)
-
-		# Check / num?ro
 		if seg.get_child_count() > 0:
 			var mark := seg.get_child(0)
 			if mark is Label:
 				var lab := mark as Label
 				lab.text = "?" if filled else str(i + 1)
-				if on_cd:
-					lab.modulate = Color(0.55, 0.55, 0.58, 0.70)
-				else:
-					lab.modulate = Color(1, 1, 1, 1) if filled else Color(0.22, 0.30, 0.24, 0.80)
+				lab.modulate = Color(1, 1, 1, 1) if filled else Color(0.22, 0.30, 0.24, 0.80)
 
 	if _combo_window_bar and is_instance_valid(_combo_window_bar):
 		_combo_window_bar.max_value = GameState.combo_window_sec()
 		_combo_window_bar.value = GameState.combo_window_left
 		_combo_window_bar.visible = (
-			GameState.combo_window_left > 0.0 and GameState.combo_boost_left <= 0.0
+			(not show_status_slot)
+			and GameState.combo_window_left > 0.0
 		)
 
 	if _combo_goal_l and is_instance_valid(_combo_goal_l):
@@ -911,18 +1027,83 @@ func _refresh_combo_panel() -> void:
 			int(GameState.combo_boost_duration_sec()),
 		]
 
-	if GameState.combo_boost_left > 0.0:
-		_combo_status_l.text = "Actif %ds" % maxi(1, int(ceil(GameState.combo_boost_left)))
-		_combo_status_l.modulate = Color(0.20, 0.50, 0.82)
-	elif GameState.combo_cooldown_left > 0.0:
-		var cd := maxi(0, int(ceil(GameState.combo_cooldown_left)))
-		_combo_status_l.text = "CD %d:%02d" % [cd / 60, cd % 60]
-		_combo_status_l.modulate = Color(0.52, 0.55, 0.50)
-	elif prog > 0:
-		_combo_status_l.text = "%d/%d" % [prog, GameState.combo_needed()]
-		_combo_status_l.modulate = Color(0.28, 0.55, 0.36)
+	_combo_status_l.text = ""
+	if show_status_slot:
+		if on_cd:
+			var cd_left := GameState.combo_cooldown_left
+			if _combo_cd_icon != null and is_instance_valid(_combo_cd_icon):
+				if _textures.has("ui_hourglass"):
+					_combo_cd_icon.texture = _textures["ui_hourglass"]
+				elif _textures.has("ui_chrono"):
+					_combo_cd_icon.texture = _textures["ui_chrono"]
+				_combo_cd_icon.modulate = Color.WHITE
+			if _combo_cd_label != null and is_instance_valid(_combo_cd_label):
+				_combo_cd_label.text = "Revient dans  %s" % _format_combo_timer(cd_left)
+				_combo_cd_label.modulate = Color(0.95, 0.88, 0.55)
+			if _combo_cd_bar != null and is_instance_valid(_combo_cd_bar):
+				var cd_max := maxf(maxf(GameState.combo_cooldown_sec(), cd_left), 0.001)
+				_combo_cd_bar.max_value = cd_max
+				_combo_cd_bar.value = cd_left
+				var f := StyleBoxFlat.new()
+				f.bg_color = Color(0.86, 0.72, 0.32, 1.0)
+				f.set_corner_radius_all(3)
+				f.anti_aliasing = true
+				_combo_cd_bar.add_theme_stylebox_override("fill", f)
+			if _combo_info_row != null and is_instance_valid(_combo_info_row):
+				_combo_info_row.modulate = Color(0.55, 0.58, 0.56, 0.55)
+			_apply_combo_panel_style(true)
+		else:
+			## Bonus actif : meme emplacement, chrono + temps restant.
+			var left := GameState.combo_boost_left
+			if _combo_cd_icon != null and is_instance_valid(_combo_cd_icon):
+				if _textures.has("ui_chrono"):
+					_combo_cd_icon.texture = _textures["ui_chrono"]
+				_combo_cd_icon.modulate = Color.WHITE
+			if _combo_cd_label != null and is_instance_valid(_combo_cd_label):
+				_combo_cd_label.text = "Bonus  %s" % _format_combo_timer(left)
+				_combo_cd_label.modulate = Color(0.22, 0.55, 0.88)
+			if _combo_cd_bar != null and is_instance_valid(_combo_cd_bar):
+				var bmax := maxf(maxf(_combo_boost_peak, GameState.combo_boost_duration_sec()), left)
+				bmax = maxf(bmax, 0.001)
+				_combo_boost_peak = bmax
+				_combo_cd_bar.max_value = bmax
+				_combo_cd_bar.value = left
+				var f2 := StyleBoxFlat.new()
+				f2.bg_color = Color(0.32, 0.72, 0.98, 1.0)
+				f2.set_corner_radius_all(3)
+				f2.anti_aliasing = true
+				_combo_cd_bar.add_theme_stylebox_override("fill", f2)
+			if _combo_info_row != null and is_instance_valid(_combo_info_row):
+				_combo_info_row.modulate = Color(0.75, 0.85, 0.95, 0.85)
+			_apply_combo_panel_style(false)
 	else:
-		_combo_status_l.text = ""
+		if _combo_info_row != null and is_instance_valid(_combo_info_row):
+			_combo_info_row.modulate = Color.WHITE
+		_apply_combo_panel_style(false)
+		if prog > 0:
+			_combo_status_l.text = "%d/%d" % [prog, GameState.combo_needed()]
+			_combo_status_l.modulate = Color(0.28, 0.55, 0.36)
+
+
+func _apply_combo_panel_style(grayed: bool) -> void:
+	if _combo_panel == null or not is_instance_valid(_combo_panel):
+		return
+	var pst := StyleBoxFlat.new()
+	if grayed:
+		pst.bg_color = Color(0.62, 0.66, 0.64, 0.90)
+		pst.border_color = Color(0.48, 0.52, 0.50, 0.75)
+	else:
+		pst.bg_color = Color(0.72, 0.82, 0.88, 0.92)
+		pst.border_color = Color(0.35, 0.58, 0.78, 0.70)
+	pst.set_border_width_all(2)
+	pst.set_corner_radius_all(10)
+	pst.content_margin_left = 8
+	pst.content_margin_right = 8
+	pst.content_margin_top = 6
+	pst.content_margin_bottom = 6
+	pst.anti_aliasing = true
+	pst.shadow_size = 0
+	_combo_panel.add_theme_stylebox_override("panel", pst)
 
 
 func _ensure_combo_panel() -> void:
@@ -934,6 +1115,7 @@ func _ensure_combo_panel() -> void:
 		_combo_panel_built
 		and host.get_child_count() > 0
 		and is_instance_valid(_combo_reward_l)
+		and is_instance_valid(_combo_cd_row)
 		and _combo_segments.size() == need
 	):
 		_refresh_combo_panel()
@@ -949,6 +1131,12 @@ func _ensure_combo_panel() -> void:
 	_combo_goal_l = null
 	_combo_window_bar = null
 	_combo_markers_row = null
+	_combo_panel = null
+	_combo_cd_row = null
+	_combo_cd_icon = null
+	_combo_cd_label = null
+	_combo_cd_bar = null
+	_combo_info_row = null
 	_combo_panel_built = false
 
 	var sep := HSeparator.new()
@@ -965,6 +1153,7 @@ func _make_combo_panel() -> PanelContainer:
 	panel.custom_minimum_size = Vector2(0, 58)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.set_meta("combo_panel", true)
+	_combo_panel = panel
 	var st := StyleBoxFlat.new()
 	st.bg_color = Color(0.72, 0.82, 0.88, 0.92)
 	st.border_color = Color(0.35, 0.58, 0.78, 0.70)
@@ -974,6 +1163,8 @@ func _make_combo_panel() -> PanelContainer:
 	st.content_margin_right = 8
 	st.content_margin_top = 6
 	st.content_margin_bottom = 6
+	st.anti_aliasing = true
+	st.shadow_size = 0
 	panel.add_theme_stylebox_override("panel", st)
 
 	var root := VBoxContainer.new()
@@ -1006,11 +1197,89 @@ func _make_combo_panel() -> PanelContainer:
 	_combo_status_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	head.add_child(_combo_status_l)
 
-	# Ligne 2 : cases de progression
+	## Slot unique : cases de progression OU bandeau bonus/CD (meme hauteur).
+	var slot := Control.new()
+	slot.custom_minimum_size = Vector2(0, 28)
+	slot.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(slot)
+
+	_combo_cd_row = HBoxContainer.new()
+	_combo_cd_row.visible = false
+	_combo_cd_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_combo_cd_row.add_theme_constant_override("separation", 6)
+	_combo_cd_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_combo_cd_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cd_wrap := PanelContainer.new()
+	cd_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cd_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	cd_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cdw := StyleBoxFlat.new()
+	cdw.bg_color = Color(0.48, 0.50, 0.52, 0.45)
+	cdw.border_color = Color(0.58, 0.48, 0.28, 0.55)
+	cdw.set_border_width_all(1)
+	cdw.set_corner_radius_all(8)
+	cdw.content_margin_left = 6
+	cdw.content_margin_right = 6
+	cdw.content_margin_top = 2
+	cdw.content_margin_bottom = 2
+	cdw.anti_aliasing = true
+	cdw.shadow_size = 0
+	cd_wrap.add_theme_stylebox_override("panel", cdw)
+	var cd_inner := VBoxContainer.new()
+	cd_inner.add_theme_constant_override("separation", 2)
+	cd_inner.alignment = BoxContainer.ALIGNMENT_CENTER
+	cd_inner.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	cd_wrap.add_child(cd_inner)
+	var cd_top := HBoxContainer.new()
+	cd_top.add_theme_constant_override("separation", 6)
+	cd_top.alignment = BoxContainer.ALIGNMENT_CENTER
+	cd_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_combo_cd_icon = TextureRect.new()
+	_combo_cd_icon.custom_minimum_size = Vector2(18, 18)
+	_combo_cd_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_combo_cd_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_combo_cd_icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_combo_cd_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_combo_cd_icon.modulate = Color.WHITE
+	if _textures.has("ui_hourglass"):
+		_combo_cd_icon.texture = _textures["ui_hourglass"]
+	elif _textures.has("ui_chrono"):
+		_combo_cd_icon.texture = _textures["ui_chrono"]
+	cd_top.add_child(_combo_cd_icon)
+	_combo_cd_label = Label.new()
+	_combo_cd_label.add_theme_font_size_override("font_size", 12)
+	_combo_cd_label.modulate = Color(0.95, 0.88, 0.55)
+	_combo_cd_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_combo_cd_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_combo_cd_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_combo_cd_label.text = "Revient dans  —"
+	cd_top.add_child(_combo_cd_label)
+	cd_inner.add_child(cd_top)
+	_combo_cd_bar = ProgressBar.new()
+	_combo_cd_bar.custom_minimum_size = Vector2(0, 4)
+	_combo_cd_bar.show_percentage = false
+	_combo_cd_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cd_bg := StyleBoxFlat.new()
+	cd_bg.bg_color = Color(0.40, 0.42, 0.44, 0.65)
+	cd_bg.set_corner_radius_all(3)
+	cd_bg.anti_aliasing = true
+	var cd_fill := StyleBoxFlat.new()
+	cd_fill.bg_color = Color(0.86, 0.72, 0.32, 1.0)
+	cd_fill.set_corner_radius_all(3)
+	cd_fill.anti_aliasing = true
+	_combo_cd_bar.add_theme_stylebox_override("background", cd_bg)
+	_combo_cd_bar.add_theme_stylebox_override("fill", cd_fill)
+	cd_inner.add_child(_combo_cd_bar)
+	_combo_cd_row.add_child(cd_wrap)
+	slot.add_child(_combo_cd_row)
+
 	var seg_row := HBoxContainer.new()
+	seg_row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	seg_row.add_theme_constant_override("separation", 5)
-	seg_row.custom_minimum_size = Vector2(0, 20)
-	root.add_child(seg_row)
+	seg_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_combo_markers_row = seg_row
+	slot.add_child(seg_row)
 
 	_combo_segments.clear()
 	for i in GameState.combo_needed():
@@ -1037,7 +1306,7 @@ func _make_combo_panel() -> PanelContainer:
 		seg_row.add_child(seg)
 		_combo_segments.append(seg)
 
-	# Chrono fen?tre combo
+	# Chrono fenetre combo
 	_combo_window_bar = ProgressBar.new()
 	_combo_window_bar.custom_minimum_size = Vector2(0, 4)
 	_combo_window_bar.max_value = GameState.combo_window_sec()
@@ -1054,10 +1323,11 @@ func _make_combo_panel() -> PanelContainer:
 	_combo_window_bar.visible = false
 	root.add_child(_combo_window_bar)
 
-	# Deux colonnes : titre au-dessus + pastille (Objectif | R?compense)
+	# Deux colonnes : Objectif | Recompense
 	var info_row := HBoxContainer.new()
 	info_row.add_theme_constant_override("separation", 8)
 	root.add_child(info_row)
+	_combo_info_row = info_row
 
 	var need_n := GameState.combo_needed()
 	var win_s := int(GameState.combo_window_sec())
@@ -1074,7 +1344,7 @@ func _make_combo_panel() -> PanelContainer:
 		true
 	))
 	info_row.add_child(_make_combo_info_column(
-		"R?compense",
+		"Recompense",
 		"ui_shop_speed",
 		"x%.1f - %ds" % [mult, dur_s],
 		Color(0.78, 0.88, 0.96, 0.95),
@@ -1229,7 +1499,7 @@ func _setup_player_bar() -> void:
 			settings_button.reparent(row)
 		row.move_child(settings_button, skill_tree_button.get_index() + 1)
 		settings_button.custom_minimum_size = Vector2(57, 57)
-		settings_button.tooltip_text = "Parametres"
+		settings_button.tooltip_text = ""
 		_apply_settings_button_icon()
 	if skill_tree_button and skill_tree_button.get_node_or_null("SpPillHost") == null:
 		var pill_bg := PanelContainer.new()
@@ -1354,11 +1624,11 @@ func _refresh_prestige_bar() -> void:
 	if ready:
 		prestige_label.text = "Prestige ! (+%d)" % GameState.calc_prestige_points_gain()
 		_style_bar_overlay_label(prestige_label)
-		prestige_bar.tooltip_text = "Clique pour prestige - reset la run, garde reliques et prestige."
+		prestige_bar.tooltip_text = ""
 	else:
 		prestige_label.text = "Prochain prestige : Nv.%d / %d" % [GameState.player_level, need]
 		_style_bar_overlay_label(prestige_label)
-		prestige_bar.tooltip_text = "Prochain prestige au niveau %d." % need
+		prestige_bar.tooltip_text = ""
 	# Fill plus vif si pr?t
 	var fill := StyleBoxFlat.new()
 	fill.bg_color = Color(0.90, 0.32, 0.58, 1.0) if ready else Color(0.78, 0.28, 0.52, 1.0)
@@ -1449,14 +1719,14 @@ func _make_skill_tree_panel_style() -> StyleBoxFlat:
 
 
 func _make_ui_close_button(on_press: Callable, light: bool = false) -> Button:
-	## Bouton fermeture compact, style pro (?).
+	## Bouton fermeture compact (croix).
 	var btn := Button.new()
-	btn.text = "?"
+	btn.text = "\u00D7"
 	btn.focus_mode = Control.FOCUS_NONE
 	btn.flat = false
 	btn.custom_minimum_size = Vector2(30, 30)
 	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	btn.add_theme_font_size_override("font_size", 18)
+	btn.add_theme_font_size_override("font_size", 20)
 	var bg := Color(0.92, 0.90, 0.84, 0.95) if light else Color(0.16, 0.20, 0.18, 0.95)
 	var bd := Color(0.62, 0.50, 0.32, 0.70) if light else Color(0.42, 0.52, 0.46, 0.75)
 	var fg := Color(0.32, 0.22, 0.12, 1.0) if light else Color(0.82, 0.88, 0.84, 1.0)
@@ -1541,6 +1811,12 @@ func _make_skill_pc_badge() -> PanelContainer:
 func _open_skill_tree() -> void:
 	if skill_tree_overlay == null:
 		return
+	if _skill_tree_tuto_active or _tutorial_mode == &"skill_tree":
+		_skill_tree_tuto_active = false
+		_tutorial_mode = &""
+		if not GameState.skill_tree_intro_seen:
+			GameState.skill_tree_intro_seen = true
+			GameState.save_game()
 	_clear_finger_tutorial()
 	_rebuild_skill_modal()
 	skill_tree_overlay.z_index = 250
@@ -1549,10 +1825,16 @@ func _open_skill_tree() -> void:
 	skill_tree_overlay.move_to_front()
 
 
-func _on_level(_level: int, _sp: int) -> void:
+func _on_level(level: int, _sp: int) -> void:
 	_refresh_player_hud()
 	if skill_tree_overlay and skill_tree_overlay.visible:
 		call_deferred("_rebuild_skill_modal")
+	if level > _hud_player_level and not _xp_anim_lock:
+		var from_lv := _hud_player_level
+		_hud_player_level = level
+		_play_level_ups_sequence(from_lv, level)
+	elif level <= _hud_player_level:
+		_hud_player_level = level
 
 
 func _refresh_player_hud() -> void:
@@ -1812,6 +2094,14 @@ func _on_tutorial_nudge(kind: StringName) -> void:
 				_finger_tutorial.z_index = 95
 			if changed:
 				_show_toast("Tuto - Nouvelle parcelle placee ! Clique Editer pour reorganiser ton champ.")
+		&"skill_tree":
+			_tutorial_mode = &"skill_tree"
+			_skill_tree_tuto_active = true
+			_show_finger_tutorial("Competences", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 120
+			if changed:
+				_show_toast("Tuto - Tu as gagne un niveau ! Ouvre l'arbre de competences.")
 		&"tutorial_done":
 			_tutorial_mode = &""
 			_last_tutorial_nudge = &""
@@ -2006,6 +2296,12 @@ func _snap_finger_to_plot() -> void:
 			anchor = rect.position + rect.size * 0.5
 			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
 			return
+	elif _tutorial_mode == &"skill_tree":
+		if skill_tree_button != null and is_instance_valid(skill_tree_button):
+			var rect := skill_tree_button.get_global_rect()
+			anchor = rect.position + rect.size * Vector2(0.35, 0.55)
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
 
 	if _finger_plot_index >= 0:
 		for tile in _plot_tiles:
@@ -2088,6 +2384,19 @@ func _update_finger_tutorial(_delta: float) -> void:
 				_finger_tutorial.z_index = 95
 		_snap_finger_to_plot()
 		return
+	## Tuto 1er level-up : doigt sur l'arbre de competences.
+	if _tutorial_mode == &"skill_tree" or _skill_tree_tuto_active:
+		if skill_tree_overlay != null and skill_tree_overlay.visible:
+			_skill_tree_tuto_active = false
+			_tutorial_mode = &""
+			_clear_finger_tutorial()
+			return
+		if _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
+			_show_finger_tutorial("Competences", "ui_click_hand")
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 120
+		_snap_finger_to_plot()
+		return
 	if GameState.is_tutorial_done():
 		if _finger_tutorial and is_instance_valid(_finger_tutorial):
 			_clear_finger_tutorial()
@@ -2149,7 +2458,7 @@ func _bind_tabs() -> void:
 		btn.expand_icon = true
 		btn.text = str(tab["title"])
 		btn.add_theme_font_size_override("font_size", 11)
-		btn.tooltip_text = str(tab.get("hint", tab["title"]))
+		btn.tooltip_text = ""
 		var icon_key: String = tab["icon"]
 		if _textures.has(icon_key):
 			btn.icon = _textures[icon_key]
@@ -2410,7 +2719,7 @@ func _setup_edit_terrain_button() -> void:
 	_edit_terrain_btn.offset_right = -6
 	_edit_terrain_btn.offset_bottom = 40
 	_edit_terrain_btn.z_index = 20
-	_edit_terrain_btn.tooltip_text = "Placer terres et machines"
+	_edit_terrain_btn.tooltip_text = ""
 	_edit_terrain_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	_edit_terrain_btn.expand_icon = true
 	_edit_terrain_btn.add_theme_constant_override("icon_max_width", 20)
@@ -2549,6 +2858,9 @@ func _build_seed_bar() -> void:
 	var keys := ["1", "2", "3", "4", "5", "6"]
 	var seed_style := _theme.get_stylebox("panel", "SeedCard") as StyleBoxFlat if _theme else _card_style
 	var key_style := _theme.get_stylebox("panel", "Keycap") as StyleBoxFlat if _theme else null
+	const CHIP_H := 124.0
+	const STOCK_H := 30.0
+	const CORNER := 12
 
 	seed_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	seed_row.alignment = BoxContainer.ALIGNMENT_BEGIN
@@ -2562,36 +2874,50 @@ func _build_seed_bar() -> void:
 		var crop: CropData = GameState.crops[i]
 		var unlocked := GameState.is_crop_unlocked(crop)
 		var chip := PanelContainer.new()
-		# Largeur g?r?e par _layout_seed_chips ; hauteur fixe confortable
-		chip.custom_minimum_size = Vector2(0, 94)
+		chip.custom_minimum_size = Vector2(0, CHIP_H)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		chip.size_flags_stretch_ratio = 1.0
+		## clip_contents coupe l'ombre StyleBox en carre : on clippe via coins du bandeau stock.
+		chip.clip_contents = false
 		chip.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if unlocked else Control.CURSOR_ARROW
 		if seed_style:
 			var st := seed_style.duplicate() as StyleBoxFlat
-			st.content_margin_left = 5
-			st.content_margin_right = 5
+			## Marges nulles en bas / cotes pour coller le bandeau stock aux bords arrondis.
+			st.content_margin_left = 0
+			st.content_margin_right = 0
 			st.content_margin_top = 4
-			st.content_margin_bottom = 10  # marge sous stock / prestige
+			st.content_margin_bottom = 0
+			st.shadow_size = 0
+			st.shadow_color = Color(0, 0, 0, 0)
+			st.anti_aliasing = true
 			chip.add_theme_stylebox_override("panel", st)
 
-		var holder := Control.new()
-		holder.custom_minimum_size = Vector2(0, 72)
-		holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		chip.add_child(holder)
+		var root := VBoxContainer.new()
+		root.add_theme_constant_override("separation", 0)
+		root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.add_child(root)
+
+		## Zone haute : chrono + icone + nom.
+		var body := Control.new()
+		body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		body.custom_minimum_size = Vector2(0, CHIP_H - STOCK_H - 4.0)
+		body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(body)
 
 		var time_row := HBoxContainer.new()
-		time_row.add_theme_constant_override("separation", 2)
+		time_row.add_theme_constant_override("separation", 3)
 		time_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		time_row.set_anchors_preset(Control.PRESET_TOP_LEFT)
-		time_row.offset_left = 2
-		time_row.offset_top = 1
-		time_row.offset_right = 44
-		time_row.offset_bottom = 12
+		time_row.offset_left = 5
+		time_row.offset_top = 3
+		time_row.offset_right = 58
+		time_row.offset_bottom = 20
 		if unlocked and _textures.has("ui_chrono"):
 			var chron := TextureRect.new()
-			chron.custom_minimum_size = Vector2(14, 14)
+			chron.custom_minimum_size = Vector2(18, 18)
 			chron.texture = _textures["ui_chrono"]
 			chron.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			chron.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -2600,25 +2926,25 @@ func _build_seed_bar() -> void:
 			time_row.add_child(chron)
 		var time_l := Label.new()
 		time_l.text = ("%.0fs" % crop.base_grow_time) if unlocked else "??"
-		time_l.add_theme_font_size_override("font_size", 9)
+		time_l.add_theme_font_size_override("font_size", 11)
 		time_l.modulate = Color(0.45, 0.55, 0.50)
 		time_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		time_row.add_child(time_l)
-		holder.add_child(time_row)
+		body.add_child(time_row)
 
 		var v := VBoxContainer.new()
 		v.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-		v.offset_left = 2
-		v.offset_top = 12
-		v.offset_right = -2
-		v.offset_bottom = -6  # espace avant le bord bas (stock / prestige)
+		v.offset_left = 4
+		v.offset_top = 22
+		v.offset_right = -4
+		v.offset_bottom = -2
 		v.add_theme_constant_override("separation", 2)
 		v.alignment = BoxContainer.ALIGNMENT_CENTER
 		v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		holder.add_child(v)
+		body.add_child(v)
 
 		var badge := PanelContainer.new()
-		badge.custom_minimum_size = Vector2(30, 30)
+		badge.custom_minimum_size = Vector2(40, 40)
 		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		badge.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		var badge_st := StyleBoxFlat.new()
@@ -2629,14 +2955,16 @@ func _build_seed_bar() -> void:
 			badge_st.bg_color = Color(0.42, 0.43, 0.45, 0.95)
 			badge_st.border_color = Color(0.28, 0.28, 0.30, 0.80)
 		badge_st.set_border_width_all(1)
-		badge_st.set_corner_radius_all(15)
+		badge_st.set_corner_radius_all(20)
 		badge_st.set_content_margin_all(3)
+		badge_st.anti_aliasing = true
+		badge_st.shadow_size = 0
 		badge.add_theme_stylebox_override("panel", badge_st)
 		v.add_child(badge)
 
 		var icon_key := "icon_%s" % String(crop.id)
 		var icon := TextureRect.new()
-		icon.custom_minimum_size = Vector2(28, 28)
+		icon.custom_minimum_size = Vector2(36, 36)
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
@@ -2649,7 +2977,7 @@ func _build_seed_bar() -> void:
 
 		var name_l := Label.new()
 		name_l.text = crop.display_name if unlocked else "??"
-		name_l.add_theme_font_size_override("font_size", 11)
+		name_l.add_theme_font_size_override("font_size", 12)
 		name_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		name_l.clip_text = true
@@ -2659,60 +2987,60 @@ func _build_seed_bar() -> void:
 			name_l.modulate = Color(0.45, 0.45, 0.48)
 		v.add_child(name_l)
 
+		## Bandeau stock : pleine largeur, coins bas = ceux de la card.
 		var stock_ctrl: Control
 		if unlocked:
 			var stock_btn := Button.new()
 			stock_btn.name = "StockCount"
-			stock_btn.text = "Stock : x0"
+			stock_btn.text = "x0"
 			stock_btn.focus_mode = Control.FOCUS_NONE
 			stock_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 			stock_btn.tooltip_text = ""
-			stock_btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-			stock_btn.add_theme_font_size_override("font_size", 9)
-			stock_btn.add_theme_color_override("font_color", Color(0.48, 0.36, 0.10))
-			stock_btn.add_theme_color_override("font_hover_color", Color(0.32, 0.22, 0.06))
-			stock_btn.add_theme_color_override("font_pressed_color", Color(0.28, 0.18, 0.04))
-			stock_btn.add_theme_color_override("font_disabled_color", Color(0.50, 0.55, 0.50))
-			## L?ger bouton texte (pas d?ic?ne bourse).
-			var sn := StyleBoxFlat.new()
-			sn.bg_color = Color(0.92, 0.88, 0.72, 0.55)
-			sn.border_color = Color(0.72, 0.58, 0.22, 0.55)
-			sn.set_border_width_all(1)
-			sn.set_corner_radius_all(6)
-			sn.content_margin_left = 6
-			sn.content_margin_right = 6
-			sn.content_margin_top = 2
-			sn.content_margin_bottom = 2
-			stock_btn.add_theme_stylebox_override("normal", sn)
-			var sh := sn.duplicate() as StyleBoxFlat
-			sh.bg_color = Color(0.96, 0.90, 0.62, 0.85)
-			sh.border_color = Color(0.78, 0.58, 0.16, 0.85)
-			stock_btn.add_theme_stylebox_override("hover", sh)
-			var sp := sn.duplicate() as StyleBoxFlat
-			sp.bg_color = Color(0.88, 0.82, 0.58, 0.9)
-			stock_btn.add_theme_stylebox_override("pressed", sp)
-			var sd := sn.duplicate() as StyleBoxFlat
-			sd.bg_color = Color(0.82, 0.84, 0.80, 0.45)
-			sd.border_color = Color(0.55, 0.58, 0.52, 0.35)
-			stock_btn.add_theme_stylebox_override("disabled", sd)
+			stock_btn.custom_minimum_size = Vector2(0, STOCK_H)
+			stock_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			stock_btn.add_theme_font_size_override("font_size", 13)
+			stock_btn.add_theme_color_override("font_color", Color(0.42, 0.30, 0.08))
+			stock_btn.add_theme_color_override("font_hover_color", Color(0.28, 0.18, 0.04))
+			stock_btn.add_theme_color_override("font_pressed_color", Color(0.22, 0.14, 0.02))
+			stock_btn.add_theme_color_override("font_disabled_color", Color(0.48, 0.50, 0.46))
+			_apply_seed_stock_strip_styles(stock_btn, CORNER, true)
 			var sell_id: StringName = crop.id
 			stock_btn.pressed.connect(func(): _open_sell_modal(sell_id))
-			v.add_child(stock_btn)
+			root.add_child(stock_btn)
 			stock_ctrl = stock_btn
 			chip.set_meta("sell_btn", stock_btn)
 		else:
 			var stock_l := Label.new()
 			stock_l.name = "StockCount"
 			stock_l.text = GameState.crop_unlock_hint(crop)
-			stock_l.add_theme_font_size_override("font_size", 9)
-			stock_l.modulate = Color(0.70, 0.55, 0.35)
+			stock_l.add_theme_font_size_override("font_size", 10)
 			stock_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			stock_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 			stock_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			stock_l.clip_text = true
 			stock_l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			stock_l.custom_minimum_size = Vector2(0, STOCK_H)
 			stock_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			v.add_child(stock_l)
+			var hint_wrap := PanelContainer.new()
+			hint_wrap.custom_minimum_size = Vector2(0, STOCK_H)
+			hint_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			hint_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var hint_st := StyleBoxFlat.new()
+			hint_st.bg_color = Color(0.50, 0.52, 0.54, 0.92)
+			hint_st.border_color = Color(0.36, 0.38, 0.40, 0.55)
+			hint_st.border_width_top = 1
+			hint_st.corner_radius_top_left = 0
+			hint_st.corner_radius_top_right = 0
+			hint_st.corner_radius_bottom_left = CORNER
+			hint_st.corner_radius_bottom_right = CORNER
+			hint_st.content_margin_left = 4
+			hint_st.content_margin_right = 4
+			hint_st.anti_aliasing = true
+			hint_st.shadow_size = 0
+			hint_wrap.add_theme_stylebox_override("panel", hint_st)
+			stock_l.modulate = Color(0.92, 0.82, 0.58)
+			hint_wrap.add_child(stock_l)
+			root.add_child(hint_wrap)
 			stock_ctrl = stock_l
 
 		chip.set_meta("crop_id", crop.id)
@@ -2723,23 +3051,25 @@ func _build_seed_bar() -> void:
 			var key_badge := PanelContainer.new()
 			key_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			key_badge.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-			key_badge.offset_left = -14
-			key_badge.offset_top = 1
-			key_badge.offset_right = -1
-			key_badge.offset_bottom = 14
+			key_badge.offset_left = -22
+			key_badge.offset_top = 2
+			key_badge.offset_right = -3
+			key_badge.offset_bottom = 21
 			if key_style:
 				var ks := key_style.duplicate() as StyleBoxFlat
-				ks.set_content_margin_all(1)
+				ks.set_content_margin_all(2)
+				ks.shadow_size = 0
+				ks.anti_aliasing = true
 				key_badge.add_theme_stylebox_override("panel", ks)
 			var key_l := Label.new()
 			key_l.text = keys[i]
-			key_l.add_theme_font_size_override("font_size", 8)
+			key_l.add_theme_font_size_override("font_size", 11)
 			key_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			key_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 			key_l.modulate = Color(0.92, 0.98, 0.55)
 			key_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			key_badge.add_child(key_l)
-			holder.add_child(key_badge)
+			body.add_child(key_badge)
 
 		if not unlocked:
 			chip.modulate = Color.WHITE
@@ -2747,15 +3077,18 @@ func _build_seed_bar() -> void:
 				var locked_st := seed_style.duplicate() as StyleBoxFlat
 				locked_st.bg_color = Color(0.58, 0.60, 0.62, 0.92)
 				locked_st.border_color = Color(0.40, 0.42, 0.44, 0.70)
-				locked_st.content_margin_left = 5
-				locked_st.content_margin_right = 5
+				locked_st.content_margin_left = 0
+				locked_st.content_margin_right = 0
 				locked_st.content_margin_top = 4
-				locked_st.content_margin_bottom = 10
+				locked_st.content_margin_bottom = 0
+				locked_st.shadow_size = 0
+				locked_st.shadow_color = Color(0, 0, 0, 0)
+				locked_st.anti_aliasing = true
 				chip.add_theme_stylebox_override("panel", locked_st)
-			chip.tooltip_text = "Debloque au %s" % GameState.crop_unlock_hint(crop)
+			chip.tooltip_text = ""
 		else:
 			var idx := i
-			chip.tooltip_text = "%s - %.0fs" % [crop.display_name, crop.base_grow_time]
+			chip.tooltip_text = ""
 			chip.gui_input.connect(func(ev: InputEvent):
 				if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
 					_on_seed_picked(idx)
@@ -2776,6 +3109,39 @@ func _build_seed_bar() -> void:
 	_rebuild_stock()
 
 
+func _apply_seed_stock_strip_styles(btn: Button, corner: int, enabled_look: bool) -> void:
+	## Bandeau bas de card : coins bas arrondis comme la SeedCard, haut droit.
+	var sn := StyleBoxFlat.new()
+	sn.bg_color = Color(0.90, 0.82, 0.52, 0.95) if enabled_look else Color(0.78, 0.80, 0.76, 0.75)
+	sn.border_color = Color(0.72, 0.55, 0.18, 0.70) if enabled_look else Color(0.55, 0.58, 0.52, 0.40)
+	sn.border_width_top = 1
+	sn.border_width_left = 0
+	sn.border_width_right = 0
+	sn.border_width_bottom = 0
+	sn.corner_radius_top_left = 0
+	sn.corner_radius_top_right = 0
+	sn.corner_radius_bottom_left = corner
+	sn.corner_radius_bottom_right = corner
+	sn.content_margin_left = 4
+	sn.content_margin_right = 4
+	sn.content_margin_top = 4
+	sn.content_margin_bottom = 5
+	sn.anti_aliasing = true
+	sn.shadow_size = 0
+	btn.add_theme_stylebox_override("normal", sn)
+	var sh := sn.duplicate() as StyleBoxFlat
+	sh.bg_color = Color(0.96, 0.88, 0.48, 1.0)
+	sh.border_color = Color(0.82, 0.60, 0.14, 0.90)
+	btn.add_theme_stylebox_override("hover", sh)
+	var sp := sn.duplicate() as StyleBoxFlat
+	sp.bg_color = Color(0.84, 0.74, 0.40, 1.0)
+	btn.add_theme_stylebox_override("pressed", sp)
+	var sd := sn.duplicate() as StyleBoxFlat
+	sd.bg_color = Color(0.76, 0.78, 0.74, 0.70)
+	sd.border_color = Color(0.55, 0.58, 0.52, 0.35)
+	btn.add_theme_stylebox_override("disabled", sd)
+
+
 func _select_tutorial_seed_if_needed() -> void:
 	if GameState.is_tutorial_done():
 		return
@@ -2790,10 +3156,11 @@ func _select_tutorial_seed_if_needed() -> void:
 
 
 func _layout_seed_chips() -> void:
-	## R?partit exactement les 6 cards sur toute la largeur, gaps ?gaux, sans scroll H.
+	## Repartit exactement les 6 cards sur toute la largeur, gaps egaux, sans scroll H.
 	var scroll := get_node_or_null("%SeedScroll") as ScrollContainer
 	if scroll == null or seed_row == null:
 		return
+	const CHIP_H := 124.0
 	var n := maxi(1, _seed_buttons.size())
 	var gap := 8
 	var avail := scroll.size.x
@@ -2805,7 +3172,6 @@ func _layout_seed_chips() -> void:
 	seed_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	seed_row.alignment = BoxContainer.ALIGNMENT_BEGIN
 	seed_row.add_theme_constant_override("separation", gap)
-	# Largeur exacte pour remplir le bandeau (reste de pixels sur les premi?res cards)
 	var usable := avail - float(gap) * float(n - 1)
 	var base_w := floorf(usable / float(n))
 	var rem := int(usable - base_w * float(n))
@@ -2814,8 +3180,8 @@ func _layout_seed_chips() -> void:
 		if not is_instance_valid(chip):
 			continue
 		var w := base_w + (1.0 if i < rem else 0.0)
-		chip.custom_minimum_size = Vector2(w, 94)
-		chip.size = Vector2(w, 94)
+		chip.custom_minimum_size = Vector2(w, CHIP_H)
+		chip.size = Vector2(w, CHIP_H)
 		chip.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 		chip.size_flags_stretch_ratio = 1.0
 
@@ -2845,14 +3211,16 @@ func _on_seed_picked(i: int) -> void:
 			chip.modulate = Color(0.55, 0.55, 0.58, 0.72)
 		if seed_style:
 			var st := seed_style.duplicate() as StyleBoxFlat
-			st.content_margin_left = 5
-			st.content_margin_right = 5
+			st.content_margin_left = 0
+			st.content_margin_right = 0
 			st.content_margin_top = 4
-			st.content_margin_bottom = 10
+			st.content_margin_bottom = 0
+			st.shadow_size = 0
+			st.shadow_color = Color(0, 0, 0, 0)
+			st.anti_aliasing = true
 			if selected:
 				st.border_color = Color(0.82, 0.68, 0.28, 0.95)
 				st.set_border_width_all(2)
-				st.shadow_size = 5
 			else:
 				st.bg_color = Color(0.72, 0.74, 0.72, 0.88)
 				st.border_color = Color(0.50, 0.52, 0.50, 0.55)
@@ -2864,22 +3232,36 @@ func _on_seed_picked(i: int) -> void:
 func _styled_card() -> PanelContainer:
 	var panel := PanelContainer.new()
 	if _card_style:
-		panel.add_theme_stylebox_override("panel", _card_style)
+		var st := _card_style.duplicate() as StyleBoxFlat
+		if st:
+			## Ombre legere uniquement (pas de clip ici) + AA pour des coins nets.
+			st.anti_aliasing = true
+			if st.shadow_size > 2:
+				st.shadow_size = 2
+				st.shadow_offset = Vector2(0, 1)
+				st.shadow_color = Color(0.12, 0.18, 0.12, 0.10)
+			panel.add_theme_stylebox_override("panel", st)
+		else:
+			panel.add_theme_stylebox_override("panel", _card_style)
 	return panel
 
 
 func _styled_order_card() -> PanelContainer:
 	var panel := PanelContainer.new()
-	## Hauteur commune waiting / commer?ant pour ?viter le saut de layout.
-	panel.custom_minimum_size = Vector2(0, 114)
+	panel.custom_minimum_size = Vector2(0, 96)
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	## clip pour le bandeau Valider ; ombre desactivee (sinon coins carres).
+	panel.clip_contents = true
 	if _card_style:
 		var st := _card_style.duplicate() as StyleBoxFlat
 		if st:
-			st.content_margin_left = 8
-			st.content_margin_right = 8
-			st.content_margin_top = 6
-			st.content_margin_bottom = 1
+			st.content_margin_left = 0
+			st.content_margin_right = 0
+			st.content_margin_top = 0
+			st.content_margin_bottom = 0
+			st.shadow_size = 0
+			st.shadow_color = Color(0, 0, 0, 0)
+			st.anti_aliasing = true
 			panel.add_theme_stylebox_override("panel", st)
 		else:
 			panel.add_theme_stylebox_override("panel", _card_style)
@@ -2894,20 +3276,22 @@ func _apply_order_trait_style(panel: PanelContainer, m: MissionData) -> void:
 			if rush_style:
 				var st := rush_style.duplicate() as StyleBoxFlat
 				if st:
-					st.content_margin_left = 8
-					st.content_margin_right = 8
-					st.content_margin_top = 6
-					st.content_margin_bottom = 1
+					st.content_margin_left = 0
+					st.content_margin_right = 0
+					st.content_margin_top = 0
+					st.content_margin_bottom = 0
 					st.border_color = col
 					st.set_border_width_all(2)
+					st.shadow_size = 0
+					st.shadow_color = Color(0, 0, 0, 0)
+					st.anti_aliasing = true
 					panel.add_theme_stylebox_override("panel", st)
 		return
-	# ?picurien / Gourmand : fond + contours teint?s du trait
 	var base := _card_style.duplicate() as StyleBoxFlat if _card_style else StyleBoxFlat.new()
-	base.content_margin_left = 8
-	base.content_margin_right = 8
-	base.content_margin_top = 6
-	base.content_margin_bottom = 1
+	base.content_margin_left = 0
+	base.content_margin_right = 0
+	base.content_margin_top = 0
+	base.content_margin_bottom = 0
 	base.bg_color = Color(
 		lerpf(0.90, col.r, 0.28),
 		lerpf(0.92, col.g, 0.28),
@@ -2916,6 +3300,9 @@ func _apply_order_trait_style(panel: PanelContainer, m: MissionData) -> void:
 	)
 	base.border_color = col
 	base.set_border_width_all(2)
+	base.shadow_size = 0
+	base.shadow_color = Color(0, 0, 0, 0)
+	base.anti_aliasing = true
 	panel.add_theme_stylebox_override("panel", base)
 
 
@@ -2925,6 +3312,10 @@ func _card(title: String, subtitle: String, cost_text: String, enabled: bool, on
 	if _card_style:
 		var compact := _card_style.duplicate() as StyleBoxFlat
 		compact.set_content_margin_all(8)
+		compact.anti_aliasing = true
+		compact.shadow_size = mini(compact.shadow_size, 2)
+		compact.shadow_offset = Vector2(0, 1)
+		compact.shadow_color = Color(0.12, 0.18, 0.12, 0.10)
 		panel.add_theme_stylebox_override("panel", compact)
 
 	panel.custom_minimum_size = Vector2(0, 48)
@@ -3017,24 +3408,166 @@ func _card(title: String, subtitle: String, cost_text: String, enabled: bool, on
 
 func _rebuild_missions() -> void:
 	_tut_deliver_btn = null
-	for c in mission_list.get_children():
-		c.queue_free()
+	## Pendant slide out / enter : ne pas toucher au layout (sinon le slot du dessous remonte).
+	if not _slot_holders.is_empty() or not _entering_board_slots.is_empty():
+		_update_next_hint()
+		return
+	## Garde les cards en livraison / en anim d'entree (evite double slide).
+	var kept: Array[Node] = []
+	var blocked_slots: Dictionary = {}
+	for bs in _entering_board_slots.keys():
+		blocked_slots[int(bs)] = true
+	var existing: Array = mission_list.get_children()
+	for c in existing:
+		if not is_instance_valid(c) or c.is_queued_for_deletion():
+			continue
+		if not (c is Control):
+			c.queue_free()
+			continue
+		var ctrl := c as Control
+		## Spacer de transition : on le garde et on bloque le slot (pas de doublon rebuild).
+		if bool(ctrl.get_meta("slot_holder", false)):
+			kept.append(ctrl)
+			var hs := int(ctrl.get_meta("board_slot", -1))
+			if hs >= 0:
+				blocked_slots[hs] = true
+			continue
+		var busy := bool(ctrl.get_meta("delivering", false)) \
+			or bool(ctrl.get_meta("enter_animating", false)) \
+			or bool(ctrl.get_meta("pending_enter", false))
+		if busy:
+			kept.append(ctrl)
+			blocked_slots[int(ctrl.get_meta("board_slot", -1))] = true
+			_retain_tut_deliver_btn(ctrl)
+		else:
+			ctrl.queue_free()
+	## Slots en slide out / enter local : jamais recrees par un rebuild concurrent.
+	for bs in _slot_holders.keys():
+		blocked_slots[int(bs)] = true
+	for bs in _slot_enter_targets.keys():
+		blocked_slots[int(bs)] = true
 	## Pendant le tuto : uniquement la commande Tuteur (pas de file d'attente).
 	if not GameState.is_tutorial_done():
 		GameState.order_refresh_slots.clear()
 		for m in GameState.missions:
 			if GameState.is_tutorial_order(m):
+				if _mission_card_kept(kept, m.id):
+					continue
 				mission_list.add_child(_make_order_card(m))
 		_update_next_hint()
 		call_deferred("_clamp_side_panels")
 		return
+	GameState.ensure_board_slots_assigned()
+	var board: Array = []
 	for m in GameState.missions:
-		mission_list.add_child(_make_order_card(m))
+		if _mission_card_kept(kept, m.id):
+			continue
+		## Evite un doublon visuel pendant l'anim de livraison / entree.
+		if blocked_slots.has(m.board_slot):
+			continue
+		var will_enter := _pending_card_enter_slots.has(m.board_slot)
+		board.append({"slot": m.board_slot, "kind": "order", "mission": m, "enter": will_enter})
 	for i in GameState.order_refresh_slots.size():
 		var slot: Dictionary = GameState.order_refresh_slots[i]
-		mission_list.add_child(_make_refresh_wait_card(slot, i))
+		var bs := int(slot.get("board_slot", 1000 + i))
+		if blocked_slots.has(bs):
+			continue
+		var will_enter_r := _pending_card_enter_slots.has(bs)
+		board.append({
+			"slot": bs,
+			"kind": "refresh",
+			"refresh": slot,
+			"idx": i,
+			"enter": will_enter_r,
+		})
+	board.sort_custom(func(a, b): return int(a["slot"]) < int(b["slot"]))
+	for entry in board:
+		var card: Control = null
+		if str(entry["kind"]) == "order":
+			card = _make_order_card(entry["mission"])
+		else:
+			card = _make_refresh_wait_card(entry["refresh"], int(entry["idx"]))
+		if bool(entry.get("enter", false)):
+			## Reserve la place dans le VBox (visible=false collapse le layout).
+			card.modulate.a = 0.0
+			card.set_meta("pending_enter", true)
+		mission_list.add_child(card)
+		## Remplace le spacer au meme index : les autres cards ne bougent pas.
+		_replace_slot_holder_with(card, int(entry["slot"]))
+	## Toujours trier (y compris spacers) pour que slot 0 / holder / slot 2 restent en place.
+	_sort_mission_list_children()
 	_update_next_hint()
 	call_deferred("_clamp_side_panels")
+	if not _pending_card_enter_slots.is_empty() and not _card_enter_scheduled:
+		_card_enter_scheduled = true
+		call_deferred("_play_pending_card_enters")
+
+
+func _replace_slot_holder_with(card: Control, board_slot: int) -> void:
+	if board_slot < 0 or card == null or not is_instance_valid(card):
+		return
+	var holder: Control = null
+	if _slot_holders.has(board_slot):
+		holder = _slot_holders[board_slot] as Control
+	if holder == null or not is_instance_valid(holder) or holder.is_queued_for_deletion():
+		## Cherche encore dans la liste (secours).
+		for c in mission_list.get_children():
+			if not is_instance_valid(c) or not (c is Control):
+				continue
+			var ctrl := c as Control
+			if bool(ctrl.get_meta("slot_holder", false)) and int(ctrl.get_meta("board_slot", -1)) == board_slot:
+				holder = ctrl
+				break
+	if holder == null or not is_instance_valid(holder):
+		return
+	var idx := holder.get_index()
+	mission_list.move_child(card, idx)
+	_slot_holders.erase(board_slot)
+	holder.queue_free()
+
+
+func _sort_mission_list_children() -> void:
+	## Trie les enfants par board_slot (meta), pour garder la place d'une card ratee.
+	var kids: Array = []
+	for c in mission_list.get_children():
+		if is_instance_valid(c) and not c.is_queued_for_deletion():
+			kids.append(c)
+	kids.sort_custom(func(a, b):
+		var sa := 9999
+		var sb := 9999
+		if is_instance_valid(a) and (a is Control):
+			sa = int((a as Control).get_meta("board_slot", 9999))
+		if is_instance_valid(b) and (b is Control):
+			sb = int((b as Control).get_meta("board_slot", 9999))
+		return sa < sb
+	)
+	for i in kids.size():
+		if is_instance_valid(kids[i]):
+			mission_list.move_child(kids[i], i)
+
+
+func _mission_card_kept(kept: Array[Node], order_id: String) -> bool:
+	for c in kept:
+		if not is_instance_valid(c) or c.is_queued_for_deletion():
+			continue
+		if c is Control and str((c as Control).get_meta("order_id", "")) == order_id:
+			return true
+	return false
+
+
+func _retain_tut_deliver_btn(card: Node) -> void:
+	if _tut_deliver_btn != null and is_instance_valid(_tut_deliver_btn):
+		return
+	for n in card.get_children():
+		_retain_tut_deliver_btn_recursive(n)
+
+
+func _retain_tut_deliver_btn_recursive(n: Node) -> void:
+	if n is Button and bool(n.get_meta("tut_deliver_btn", false)):
+		_tut_deliver_btn = n as Button
+		return
+	for c in n.get_children():
+		_retain_tut_deliver_btn_recursive(c)
 
 
 func _refresh_mission_timers() -> void:
@@ -3059,7 +3592,7 @@ func _refresh_timer_labels_recursive(node: Node) -> void:
 			for m in GameState.missions:
 				if m.id == oid:
 					lab.text = _format_order_time(m.time_left)
-					var urgent := m.time_left <= 15.0
+					var urgent := m.time_left <= 10.0
 					lab.modulate = m.trait_color() if not urgent else Color(0.92, 0.28, 0.24)
 					break
 		elif lab.has_meta("timer_refresh_idx"):
@@ -3074,16 +3607,17 @@ func _refresh_timer_labels_recursive(node: Node) -> void:
 
 func _refresh_wait_title(reason: String) -> String:
 	if reason == "failed":
-		return "Commande ratee, un client repassera..."
-	return "Commande refusee, un client repassera..."
+		return "Commande rat\u00e9e, un client repassera..."
+	return "Commande refus\u00e9e, un client repassera..."
 
 
 func _make_refresh_wait_card(slot: Dictionary, refresh_idx: int = 0) -> PanelContainer:
 	var panel := _styled_order_card()
 	panel.modulate = Color(0.88, 0.90, 0.88, 0.9)
+	panel.set_meta("board_slot", int(slot.get("board_slot", refresh_idx)))
 
 	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 8)
+	root.add_theme_constant_override("separation", 4)
 	root.alignment = BoxContainer.ALIGNMENT_CENTER
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -3147,14 +3681,32 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 	if can_deliver:
 		panel.modulate = Color(1.04, 1.10, 1.0)
 
-	var root := VBoxContainer.new()
-	root.add_theme_constant_override("separation", 2)
-	panel.add_child(root)
+	var corner_r := 10 if m.client_trait == MissionData.TRAIT_IMPATIENT else 12
 
-	# ?? Ligne 1 : avatar + m?tier/trait + r?compenses (or / xp) ??
+	## Contenu + bandeau Valider plein bord droit (coins arrondis droits).
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 0)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.add_child(row)
+
+	var body := MarginContainer.new()
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("margin_left", 8)
+	body.add_theme_constant_override("margin_right", 6)
+	body.add_theme_constant_override("margin_top", 4)
+	body.add_theme_constant_override("margin_bottom", 2)
+	row.add_child(body)
+
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 1)
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	body.add_child(root)
+
 	const FACE_SIZE := 36.0
 	const HEAD_SEP := 6.0
-	var body_indent := 0.0
 
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", int(HEAD_SEP))
@@ -3162,15 +3714,16 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 
 	var face_key := "client_%d" % m.client_face
 	var face_tex: Texture2D = _textures.get(face_key, _textures.get("ui_mission", null))
+	var face_ic: TextureRect = null
 	if face_tex:
-		var ic := TextureRect.new()
-		ic.custom_minimum_size = Vector2(FACE_SIZE, FACE_SIZE)
-		ic.texture = face_tex
-		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		head.add_child(ic)
+		face_ic = TextureRect.new()
+		face_ic.custom_minimum_size = Vector2(FACE_SIZE, FACE_SIZE)
+		face_ic.texture = face_tex
+		face_ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		face_ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		face_ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		face_ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		head.add_child(face_ic)
 
 	var name_col := VBoxContainer.new()
 	name_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3200,13 +3753,14 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 	reward_col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	head.add_child(reward_col)
 
+	var gold_amt := maxi(1, int(m.coin_reward * GameState.mission_money_mult()))
 	var gold_row := HBoxContainer.new()
 	gold_row.add_theme_constant_override("separation", 3)
 	gold_row.alignment = BoxContainer.ALIGNMENT_END
 	gold_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	reward_col.add_child(gold_row)
 	var money_l := Label.new()
-	money_l.text = "+%d or" % maxi(1, int(m.coin_reward * GameState.mission_money_mult()))
+	money_l.text = "+%d or" % gold_amt
 	money_l.add_theme_font_size_override("font_size", 12)
 	money_l.modulate = Color(0.55, 0.45, 0.14)
 	money_l.autowrap_mode = TextServer.AUTOWRAP_OFF
@@ -3214,7 +3768,7 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 	gold_row.add_child(money_l)
 	if _textures.has("ui_coin"):
 		var coin := TextureRect.new()
-		coin.custom_minimum_size = Vector2(22, 22)
+		coin.custom_minimum_size = Vector2(20, 20)
 		coin.texture = _textures["ui_coin"]
 		coin.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		coin.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -3236,7 +3790,7 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 	xp_row.add_child(xp_l)
 	if _textures.has("ui_xp"):
 		var xp_ic := TextureRect.new()
-		xp_ic.custom_minimum_size = Vector2(22, 22)
+		xp_ic.custom_minimum_size = Vector2(20, 20)
 		xp_ic.texture = _textures["ui_xp"]
 		xp_ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		xp_ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -3244,29 +3798,21 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 		xp_ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		xp_row.add_child(xp_ic)
 
-	# ?? Ligne 2 : besoins (chips), align?s au bord gauche du portrait ??
-	var needs_row := HBoxContainer.new()
-	needs_row.add_theme_constant_override("separation", 0)
-	needs_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root.add_child(needs_row)
-	if body_indent > 0.0:
-		var needs_pad := Control.new()
-		needs_pad.custom_minimum_size = Vector2(body_indent, 0)
-		needs_pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		needs_row.add_child(needs_pad)
-
 	var needs := HBoxContainer.new()
 	needs.add_theme_constant_override("separation", 6)
 	needs.alignment = BoxContainer.ALIGNMENT_BEGIN
 	needs.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	needs_row.add_child(needs)
+	root.add_child(needs)
 
+	var need_chips: Dictionary = {}
 	for crop_id in m.requirements:
 		var need: int = int(m.requirements[crop_id])
 		var have: int = GameState.get_stock(crop_id)
 		var ready := have >= need
 		var chip := PanelContainer.new()
 		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.set_meta("crop_id", crop_id)
+		chip.set_meta("need_qty", need)
 		if _chip_style:
 			var st := _chip_style.duplicate() as StyleBoxFlat
 			if st:
@@ -3298,31 +3844,18 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 		qty.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		cell.add_child(qty)
 		needs.add_child(chip)
+		need_chips[crop_id] = chip
 
-	## Espace l?ger entre les ressources et la ligne timer / boutons.
 	var mid_gap := Control.new()
-	mid_gap.custom_minimum_size = Vector2(0, 3)
+	mid_gap.custom_minimum_size = Vector2(0, 1)
 	mid_gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(mid_gap)
-
-	# ?? Ligne 3 : chrono (m?me indent) | actions ??
-	var foot := HBoxContainer.new()
-	foot.add_theme_constant_override("separation", 4)
-	foot.alignment = BoxContainer.ALIGNMENT_CENTER
-	root.add_child(foot)
-
-	if body_indent > 0.0:
-		var foot_pad := Control.new()
-		foot_pad.custom_minimum_size = Vector2(body_indent, 0)
-		foot_pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		foot.add_child(foot_pad)
 
 	var time_row := HBoxContainer.new()
 	time_row.add_theme_constant_override("separation", 3)
 	time_row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	time_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	time_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	foot.add_child(time_row)
+	root.add_child(time_row)
 	if _textures.has("ui_chrono"):
 		var tic := TextureRect.new()
 		tic.custom_minimum_size = Vector2(18, 18)
@@ -3337,65 +3870,91 @@ func _make_order_card(m: MissionData) -> PanelContainer:
 	timer_l.add_theme_font_size_override("font_size", 13)
 	timer_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	timer_l.autowrap_mode = TextServer.AUTOWRAP_OFF
-	timer_l.modulate = trait_col if m.time_left > 15.0 else Color(0.92, 0.28, 0.24)
+	timer_l.modulate = trait_col if m.time_left > 10.0 else Color(0.92, 0.28, 0.24)
 	timer_l.set_meta("timer_order_id", m.id)
 	timer_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	time_row.add_child(timer_l)
 
-	var actions := HBoxContainer.new()
-	actions.add_theme_constant_override("separation", 3)
-	actions.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	foot.add_child(actions)
-
 	var oid := m.id
-	var is_tut := GameState.is_tutorial_order(m)
-	var cancel_btn := _make_action_button(false, not is_tut)
-	cancel_btn.custom_minimum_size = Vector2(26, 26)
-	cancel_btn.tooltip_text = "Commande tutoriel" if is_tut else "Refuser (30s)"
-	cancel_btn.mouse_filter = Control.MOUSE_FILTER_STOP
-	if not is_tut:
-		cancel_btn.pressed.connect(func(): GameState.cancel_order(oid))
-	actions.add_child(cancel_btn)
-
-	var check_btn := _make_action_button(true, can_deliver)
-	check_btn.custom_minimum_size = Vector2(26, 26)
-	check_btn.tooltip_text = "Livrer"
-	check_btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	var reqs: Dictionary = m.requirements.duplicate()
+	panel.set_meta("order_id", oid)
+	panel.set_meta("board_slot", m.board_slot)
+	var check_btn := _make_order_accept_strip(can_deliver, corner_r)
 	check_btn.set_meta("tut_deliver_btn", true)
-	check_btn.pressed.connect(func(): GameState.try_deliver_order(oid))
-	actions.add_child(check_btn)
+	check_btn.pressed.connect(func():
+		_start_order_deliver(panel, check_btn, oid, reqs, need_chips, face_ic, gold_row, xp_row)
+	)
+	row.add_child(check_btn)
 	if GameState.is_tutorial_order(m):
 		_tut_deliver_btn = check_btn
 
 	return panel
 
 
-func _make_action_button(is_check: bool, enabled: bool) -> Button:
+func _make_order_accept_strip(enabled: bool, corner_r: int) -> Button:
+	## Bandeau Valider : toute la hauteur, coins droits = coins de la card.
 	var btn := Button.new()
 	btn.focus_mode = Control.FOCUS_NONE
-	btn.custom_minimum_size = Vector2(26, 26)
+	btn.custom_minimum_size = Vector2(48, 0)
+	btn.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	btn.disabled = not enabled
 	btn.expand_icon = true
-	btn.add_theme_constant_override("icon_max_width", 16)
+	btn.add_theme_constant_override("icon_max_width", 26)
 	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if enabled else Control.CURSOR_ARROW
-	var type_name := "BtnCheck" if is_check else "BtnCancel"
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	if _theme:
 		for state in ["normal", "hover", "pressed", "disabled"]:
-			var st := _theme.get_stylebox(state, type_name)
-			if st:
-				btn.add_theme_stylebox_override(state, st.duplicate())
-	var tex_key := "ui_btn_check" if is_check else "ui_btn_cancel"
-	if _textures.has(tex_key):
-		btn.icon = _textures[tex_key]
+			var base := _theme.get_stylebox(state, "BtnCheck")
+			if base == null:
+				continue
+			var st := base.duplicate() as StyleBoxFlat
+			if st == null:
+				continue
+			st.corner_radius_top_left = 0
+			st.corner_radius_bottom_left = 0
+			st.corner_radius_top_right = corner_r
+			st.corner_radius_bottom_right = corner_r
+			st.content_margin_left = 6
+			st.content_margin_right = 6
+			st.content_margin_top = 8
+			st.content_margin_bottom = 8
+			btn.add_theme_stylebox_override(state, st)
+	if _textures.has("ui_btn_check"):
+		btn.icon = _textures["ui_btn_check"]
 		btn.text = ""
 		btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	else:
-		btn.text = "OK" if is_check else "X"
+		btn.text = "OK"
 		btn.add_theme_font_size_override("font_size", 14)
 		btn.add_theme_color_override("font_color", Color.WHITE)
 	if not enabled:
 		btn.modulate = Color(0.78, 0.78, 0.78, 0.75)
 	return btn
+
+
+func _start_order_deliver(
+	panel: PanelContainer,
+	btn: Button,
+	oid: String,
+	requirements: Dictionary,
+	need_chips: Dictionary,
+	face_ic: TextureRect,
+	gold_row: Control,
+	xp_row: Control
+) -> void:
+	if not is_instance_valid(panel) or bool(panel.get_meta("delivering", false)):
+		return
+	var mission: MissionData = null
+	for m in GameState.missions:
+		if m.id == oid:
+			mission = m
+			break
+	if mission == null or not mission.is_fulfillable(GameState.stock):
+		return
+	panel.set_meta("delivering", true)
+	btn.disabled = true
+	btn.mouse_default_cursor_shape = Control.CURSOR_ARROW
+	await _play_order_deliver_sequence(panel, oid, requirements, need_chips, face_ic, gold_row, xp_row)
 
 
 func _rebuild_stock() -> void:
@@ -3408,18 +3967,23 @@ func _rebuild_stock() -> void:
 		var stock_ctrl: Control = chip.get_meta("stock_label")
 		var cid: StringName = chip.get_meta("crop_id")
 		var amt := GameState.get_stock(cid)
-		var txt := "Stock : x%d" % amt
+		var txt := "x%d" % amt
 		if stock_ctrl is Button:
 			var sb := stock_ctrl as Button
 			sb.text = txt
-			## Pendant l??tape vente tuto : seul le l?gume offert est cliquable.
+			## Pendant l'etape vente tuto : seul le legume offert est cliquable.
 			if GameState.is_tutorial_sell_step():
 				sb.disabled = amt <= 0 or cid != GameState.TUTORIAL_SELL_CROP
 			else:
 				sb.disabled = (not can_sell) or amt <= 0
+			## Contraste selon stock.
+			if amt > 0:
+				sb.add_theme_color_override("font_color", Color(0.38, 0.26, 0.06))
+			else:
+				sb.add_theme_color_override("font_color", Color(0.52, 0.50, 0.44))
 		elif stock_ctrl is Label:
 			(stock_ctrl as Label).text = txt
-			(stock_ctrl as Label).modulate = Color(0.55, 0.42, 0.10) if amt > 0 else Color(0.50, 0.55, 0.50)
+			(stock_ctrl as Label).modulate = Color(0.42, 0.30, 0.08) if amt > 0 else Color(0.50, 0.52, 0.48)
 
 
 func _open_sell_modal(crop_id: StringName) -> void:
@@ -3651,7 +4215,10 @@ func _fill_boosts() -> void:
 
 	var plots_now := GameState.unlocked_plots
 	var pl_maxed := plots_now >= GameState.MAX_PLOTS
-	var pl_sub := "MAX (%d)" % plots_now if pl_maxed else "+1 parcelle auto (actuel %d) - Editer pour reorganiser" % plots_now
+	var pl_sub := "MAX (%d)" % plots_now if pl_maxed else "+1 parcelle auto (actuel %d)%s" % [
+		plots_now,
+		" - Editer pour reorganiser" if GameState.is_terrain_edit_unlocked() else ""
+	]
 	side_content.add_child(_shop_row(
 		"Nouvelle parcelle",
 		pl_sub,
@@ -3846,7 +4413,6 @@ func _shop_row(
 		var info := Button.new()
 		info.focus_mode = Control.FOCUS_NONE
 		info.text = "i"
-		info.tooltip_text = "Details des niveaux"
 		info.custom_minimum_size = Vector2(18, 18)
 		info.add_theme_font_size_override("font_size", 10)
 		var in_st := StyleBoxFlat.new()
@@ -5158,12 +5724,757 @@ func _spawn_gardener_arm(from_tile: PlotTile, to_tile: PlotTile, crop_id: String
 			_spawn_crop_to_stock_fly(drop_from, crop_id)
 	)
 
+func _play_order_deliver_sequence(
+	panel: PanelContainer,
+	oid: String,
+	requirements: Dictionary,
+	need_chips: Dictionary,
+	face_ic: TextureRect,
+	gold_row: Control,
+	xp_row: Control
+) -> void:
+	## Claim d'abord, puis FX ; barre XP animee pendant le vol ; card slide droite.
+	var board_slot := int(panel.get_meta("board_slot", -1)) if is_instance_valid(panel) else -1
+	var xp_before := GameState.xp
+	var req_before := GameState.xp_required
+	var level_before := GameState.player_level
+	_xp_anim_lock = true
+	if not GameState.try_deliver_order(oid, true, false):
+		_xp_anim_lock = false
+		if is_instance_valid(panel):
+			panel.remove_meta("delivering")
+		return
+	var rewards := GameState.get_last_claim_rewards()
+	var xp_after := GameState.xp
+	var req_after := GameState.xp_required
+	var level_after := GameState.player_level
+	## Remet la barre a l'etat pre-claim pour l'animer ensuite.
+	_apply_xp_bar_visual(xp_before, req_before)
+
+	var gold_from := gold_row.get_global_rect().get_center() if is_instance_valid(gold_row) else panel.get_global_rect().get_center()
+	var xp_from := xp_row.get_global_rect().get_center() if is_instance_valid(xp_row) else gold_from
+	var face_anchor := gold_from
+	if face_ic != null and is_instance_valid(face_ic):
+		var fr := face_ic.get_global_rect()
+		face_anchor = fr.position + Vector2(fr.size.x * 0.85, -4.0)
+	elif is_instance_valid(panel):
+		var pr := panel.get_global_rect()
+		face_anchor = pr.position + Vector2(48.0, 8.0)
+
+	await _fly_stock_to_order_needs(requirements, need_chips)
+	if not is_instance_valid(panel):
+		_xp_anim_lock = false
+		_apply_xp_bar_visual(xp_after, req_after)
+		_hud_player_level = level_after
+		GameState.notify_missions_changed()
+		return
+	await _show_merci_bubble_at(face_anchor)
+	if not is_instance_valid(panel):
+		_xp_anim_lock = false
+		_apply_xp_bar_visual(xp_after, req_after)
+		_hud_player_level = level_after
+		GameState.notify_missions_changed()
+		return
+
+	await _fly_order_rewards(
+		gold_from, xp_from, rewards.x, rewards.y,
+		level_before, xp_before, req_before,
+		level_after, xp_after, req_after
+	)
+
+	_xp_anim_lock = false
+	_apply_xp_bar_visual(xp_after, req_after)
+	if level_after > level_before:
+		await _play_level_ups_sequence(level_before, level_after)
+	_hud_player_level = level_after
+	_refresh_player_hud()
+
+	if is_instance_valid(panel):
+		await _slide_order_card_out(panel)
+	## Insertion locale au bon slot (pas de rebuild complet = pas de saut au slot 1).
+	if board_slot >= 0:
+		await _spawn_replacement_card_at_slot(board_slot)
+	else:
+		GameState.notify_missions_changed()
+	_update_next_hint()
+
+
+func _fly_stock_to_order_needs(requirements: Dictionary, need_chips: Dictionary) -> void:
+	var max_wait := 0.0
+	var fly_i := 0
+	for crop_id in requirements:
+		var need: int = int(requirements[crop_id])
+		var n_fly := clampi(need, 1, 3)
+		var dest_c := Vector2.ZERO
+		var chip: Control = need_chips.get(crop_id, null)
+		if chip != null and is_instance_valid(chip):
+			dest_c = chip.get_global_rect().get_center()
+		else:
+			continue
+		var from_c := _stock_chip_center_global(crop_id)
+		var ikey := "icon_%s" % String(crop_id)
+		if not _textures.has(ikey):
+			continue
+		for j in n_fly:
+			var delay := float(fly_i) * 0.06 + float(j) * 0.04
+			max_wait = maxf(max_wait, delay + 0.42)
+			var fly := TextureRect.new()
+			fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			fly.top_level = true
+			fly.z_index = 98
+			fly.size = Vector2(20, 20)
+			fly.custom_minimum_size = fly.size
+			fly.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			fly.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			fly.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+			fly.texture = _textures[ikey]
+			fly.pivot_offset = fly.size * 0.5
+			add_child(fly)
+			var jitter := Vector2(randf_range(-6.0, 6.0), randf_range(-4.0, 4.0))
+			var start_p := from_c - fly.size * 0.5 + jitter
+			var end_p := dest_c - fly.size * 0.5 + Vector2(randf_range(-4.0, 4.0), randf_range(-3.0, 3.0))
+			var mid := (start_p + end_p) * 0.5 + Vector2(0, -28.0 - randf() * 12.0)
+			fly.global_position = start_p
+			fly.modulate.a = 0.0
+			var tw := create_tween()
+			tw.tween_interval(delay)
+			tw.tween_property(fly, "modulate:a", 1.0, 0.06)
+			var step := func(u: float) -> void:
+				var a: Vector2 = start_p.lerp(mid, u)
+				var b: Vector2 = mid.lerp(end_p, u)
+				fly.global_position = a.lerp(b, u)
+				fly.scale = Vector2.ONE * lerpf(0.85, 1.12, sin(u * PI))
+			tw.tween_method(step, 0.0, 1.0, 0.38).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+			tw.tween_property(fly, "modulate:a", 0.0, 0.08)
+			tw.tween_callback(fly.queue_free)
+		fly_i += 1
+		if chip != null and is_instance_valid(chip):
+			chip.pivot_offset = chip.size * 0.5
+			var pulse := create_tween()
+			pulse.tween_interval(0.2)
+			pulse.tween_property(chip, "scale", Vector2(1.08, 1.08), 0.1)
+			pulse.tween_property(chip, "scale", Vector2.ONE, 0.12)
+	if max_wait > 0.0:
+		await get_tree().create_timer(max_wait).timeout
+	else:
+		await get_tree().process_frame
+
+
+func _show_merci_bubble_at(anchor: Vector2) -> void:
+	var bubble := PanelContainer.new()
+	bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bubble.top_level = true
+	bubble.z_index = 99
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0.98, 0.96, 0.88, 0.98)
+	st.border_color = Color(0.55, 0.48, 0.32, 0.75)
+	st.set_border_width_all(1)
+	st.set_corner_radius_all(10)
+	st.content_margin_left = 8
+	st.content_margin_right = 8
+	st.content_margin_top = 4
+	st.content_margin_bottom = 4
+	st.shadow_color = Color(0.12, 0.14, 0.10, 0.22)
+	st.shadow_size = 3
+	st.shadow_offset = Vector2(0, 1)
+	bubble.add_theme_stylebox_override("panel", st)
+	var lab := Label.new()
+	lab.text = "Merci"
+	lab.add_theme_font_size_override("font_size", 13)
+	lab.add_theme_color_override("font_color", Color(0.28, 0.32, 0.22))
+	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bubble.add_child(lab)
+	add_child(bubble)
+	await get_tree().process_frame
+	if not is_instance_valid(bubble):
+		return
+	bubble.global_position = anchor
+	bubble.pivot_offset = Vector2(0, bubble.size.y)
+	bubble.scale = Vector2(0.55, 0.55)
+	bubble.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(bubble, "scale", Vector2.ONE, 0.18).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(bubble, "modulate:a", 1.0, 0.12)
+	tw.tween_interval(0.42)
+	tw.tween_property(bubble, "modulate:a", 0.0, 0.18)
+	tw.parallel().tween_property(bubble, "global_position", anchor + Vector2(6, -10), 0.18)
+	await tw.finished
+	if is_instance_valid(bubble):
+		bubble.queue_free()
+
+
+func _fly_order_rewards(
+	gold_from: Vector2,
+	xp_from: Vector2,
+	gold_amount: int,
+	xp_amount: int,
+	level_before: int = -1,
+	xp_before: int = -1,
+	req_before: int = -1,
+	level_after: int = -1,
+	xp_after: int = -1,
+	req_after: int = -1
+) -> void:
+	var gold_dest := gold_from
+	if cur_money_icon != null and is_instance_valid(cur_money_icon):
+		gold_dest = cur_money_icon.get_global_rect().get_center()
+	elif cur_money_label != null and is_instance_valid(cur_money_label):
+		gold_dest = cur_money_label.get_global_rect().get_center()
+
+	var xp_dest := xp_from
+	if xp_bar != null and is_instance_valid(xp_bar):
+		xp_dest = xp_bar.get_global_rect().get_center()
+
+	var n_coins := clampi(3 + gold_amount / 12, 3, 6)
+	var max_wait := 0.0
+	for i in n_coins:
+		var fly := TextureRect.new()
+		fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fly.top_level = true
+		fly.z_index = 97
+		fly.size = Vector2(20, 20)
+		fly.custom_minimum_size = fly.size
+		fly.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		fly.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		fly.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		if _textures.has("ui_coin"):
+			fly.texture = _textures["ui_coin"]
+		fly.pivot_offset = fly.size * 0.5
+		add_child(fly)
+		var jitter := Vector2(randf_range(-10.0, 10.0), randf_range(-8.0, 8.0))
+		fly.global_position = gold_from - fly.size * 0.5 + jitter
+		var delay := float(i) * 0.05
+		max_wait = maxf(max_wait, delay + 0.55)
+		var mid := (gold_from + gold_dest) * 0.5 + Vector2(randf_range(-24.0, 24.0), -40.0 - randf() * 20.0)
+		var start_p := fly.global_position
+		var end_p := gold_dest - fly.size * 0.5
+		var tw := create_tween()
+		tw.tween_interval(delay)
+		var step := func(u: float) -> void:
+			var a: Vector2 = start_p.lerp(mid, u)
+			var b: Vector2 = mid.lerp(end_p, u)
+			fly.global_position = a.lerp(b, u)
+			fly.scale = Vector2.ONE * lerpf(0.9, 1.15, sin(u * PI))
+		tw.tween_method(step, 0.0, 1.0, 0.55).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_callback(fly.queue_free)
+
+	var n_xp := clampi(2 + xp_amount / 8, 2, 5)
+	for i in n_xp:
+		var fly := TextureRect.new()
+		fly.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		fly.top_level = true
+		fly.z_index = 97
+		fly.size = Vector2(18, 18)
+		fly.custom_minimum_size = fly.size
+		fly.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		fly.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		fly.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		if _textures.has("ui_xp"):
+			fly.texture = _textures["ui_xp"]
+		fly.pivot_offset = fly.size * 0.5
+		add_child(fly)
+		var jitter := Vector2(randf_range(-8.0, 8.0), randf_range(-6.0, 6.0))
+		fly.global_position = xp_from - fly.size * 0.5 + jitter
+		var delay := 0.08 + float(i) * 0.05
+		max_wait = maxf(max_wait, delay + 0.52)
+		var mid := (xp_from + xp_dest) * 0.5 + Vector2(randf_range(-20.0, 20.0), -30.0 - randf() * 16.0)
+		var start_p := fly.global_position
+		var end_p := xp_dest - fly.size * 0.5
+		var tw := create_tween()
+		tw.tween_interval(delay)
+		var step := func(u: float) -> void:
+			var a: Vector2 = start_p.lerp(mid, u)
+			var b: Vector2 = mid.lerp(end_p, u)
+			fly.global_position = a.lerp(b, u)
+			fly.scale = Vector2.ONE * lerpf(0.88, 1.12, sin(u * PI))
+		tw.tween_method(step, 0.0, 1.0, 0.5).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_callback(fly.queue_free)
+
+	if cur_money_label != null and is_instance_valid(cur_money_label):
+		var pulse := create_tween()
+		pulse.tween_property(cur_money_label, "modulate", Color(1.4, 1.2, 0.55), 0.12)
+		pulse.tween_property(cur_money_label, "modulate", Color.WHITE, 0.28)
+
+	## Barre XP : monte en meme temps que les icones volent.
+	var t0 := Time.get_ticks_msec()
+	if xp_amount > 0 and xp_before >= 0 and xp_after >= 0 and xp_bar != null and is_instance_valid(xp_bar):
+		await _animate_xp_bar_gain(level_before, xp_before, req_before, level_after, xp_after, req_after)
+	var left := max_wait - float(Time.get_ticks_msec() - t0) / 1000.0
+	if left > 0.05:
+		await get_tree().create_timer(left).timeout
+
+
+func _apply_xp_bar_visual(current: int, required: int) -> void:
+	if xp_bar == null:
+		return
+	xp_bar.max_value = maxf(1.0, float(required))
+	xp_bar.value = clampf(float(current), 0.0, float(required))
+	if xp_label:
+		xp_label.text = "Prochain niveau : %d/%d XP" % [current, required]
+		xp_label.add_theme_font_size_override("font_size", 10)
+		_style_bar_overlay_label(xp_label)
+
+
+func _animate_xp_bar_gain(
+	level_before: int,
+	xp_before: int,
+	req_before: int,
+	level_after: int,
+	xp_after: int,
+	req_after: int
+) -> void:
+	if xp_bar == null or not is_instance_valid(xp_bar):
+		return
+	var lvl := level_before
+	var cur := float(xp_before)
+	var req := float(maxi(1, req_before))
+	xp_bar.max_value = req
+	xp_bar.value = cur
+	xp_bar.modulate = Color(1.15, 1.35, 1.2)
+	## Remplit jusqu'aux level-ups intermediaires, puis valeur finale.
+	while lvl < level_after:
+		var tw := create_tween()
+		tw.tween_property(xp_bar, "value", req, 0.32).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		await tw.finished
+		lvl += 1
+		req = float(maxi(1, GameState.xp_required_for_level(lvl)))
+		xp_bar.max_value = req
+		xp_bar.value = 0.0
+		if xp_label:
+			xp_label.text = "Niveau %d !" % lvl
+	var end_v := float(mini(xp_after, req_after)) if lvl >= level_after else float(xp_after)
+	xp_bar.max_value = maxf(1.0, float(req_after))
+	var tw2 := create_tween()
+	tw2.tween_property(xp_bar, "value", end_v, 0.38).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw2.parallel().tween_property(xp_bar, "modulate", Color.WHITE, 0.38)
+	await tw2.finished
+	if xp_label:
+		xp_label.text = "Prochain niveau : %d/%d XP" % [xp_after, req_after]
+
+
+func _slide_order_card_out(panel: Control) -> void:
+	if not is_instance_valid(panel):
+		return
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var rect := panel.get_global_rect()
+	var start := rect.position
+	var w := maxf(rect.size.x, 80.0)
+	var h := maxf(rect.size.y, 72.0)
+	var board_slot := int(panel.get_meta("board_slot", -1))
+	var parent := panel.get_parent() as Control
+	var idx := panel.get_index()
+
+	## Memorise la position ecran exacte du slot pour l'entree.
+	if board_slot >= 0:
+		_slot_enter_targets[board_slot] = rect
+		_entering_board_slots[board_slot] = true
+
+	## Placeholder AVANT de retirer la card : le slot reste vide, les cards du dessous ne remontent pas.
+	var spacer := _make_slot_spacer(h, board_slot)
+	if parent != null and is_instance_valid(parent):
+		parent.add_child(spacer)
+		parent.move_child(spacer, idx)
+		if board_slot >= 0:
+			_slot_holders[board_slot] = spacer
+
+	## Sort la card du layout pour l'animer vers la droite.
+	panel.reparent(self)
+	panel.top_level = true
+	panel.z_index = 40
+	panel.size = rect.size
+	panel.global_position = start
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(panel, "global_position:x", start.x + w + 56.0, 0.32).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(panel, "modulate:a", 0.0, 0.28)
+	await tw.finished
+	if is_instance_valid(panel):
+		panel.queue_free()
+
+
+func _make_slot_spacer(height: float, board_slot: int) -> Control:
+	## Reserve la hauteur du slot dans le VBox (ColorRect = taille fiable, contrairement a Control vide).
+	var spacer := ColorRect.new()
+	spacer.color = Color(0, 0, 0, 0)
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	spacer.custom_minimum_size = Vector2(0.0, maxf(height, 72.0))
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	spacer.set_meta("slot_holder", true)
+	spacer.set_meta("board_slot", board_slot)
+	return spacer
+
+
+func _spawn_replacement_card_at_slot(board_slot: int) -> void:
+	## Le spacer garde le trou vide ; un ghost slide dedans ; puis on swap spacer -> card.
+	if mission_list == null or not is_instance_valid(mission_list):
+		return
+	if board_slot >= 0:
+		_entering_board_slots[board_slot] = true
+	GameState.ensure_board_slots_assigned()
+
+	var card: Control = _find_mission_list_card_for_slot(board_slot)
+	var already_in_list := card != null
+	if card == null:
+		for m in GameState.missions:
+			if m.board_slot == board_slot:
+				card = _make_order_card(m)
+				break
+	if card == null:
+		for i in GameState.order_refresh_slots.size():
+			var slot: Dictionary = GameState.order_refresh_slots[i]
+			if int(slot.get("board_slot", -1)) == board_slot:
+				card = _make_refresh_wait_card(slot, i)
+				break
+	if card == null:
+		_clear_slot_holder(board_slot)
+		_entering_board_slots.erase(board_slot)
+		GameState.notify_missions_changed()
+		return
+
+	var holder: Control = null
+	if _slot_holders.has(board_slot):
+		holder = _slot_holders[board_slot] as Control
+
+	## Cible = rect du spacer (slot vide toujours en place), sinon memoire.
+	var target_rect := Rect2()
+	if holder != null and is_instance_valid(holder) and not holder.is_queued_for_deletion():
+		await get_tree().process_frame
+		if is_instance_valid(holder):
+			target_rect = holder.get_global_rect()
+			## Largeur parfois nulle sur un Control vide : prendre celle de la liste.
+			if target_rect.size.x < 4.0 and mission_list != null:
+				target_rect.size.x = mission_list.size.x
+			if target_rect.size.y < 4.0:
+				target_rect.size.y = holder.custom_minimum_size.y
+	if target_rect.size.x < 4.0 and _slot_enter_targets.has(board_slot):
+		target_rect = _slot_enter_targets[board_slot] as Rect2
+
+	## Si une card etait deja dans la liste (rebuild), la sortir du layout
+	## pour que le spacer seul reserve la place pendant le ghost.
+	if already_in_list and is_instance_valid(card):
+		if holder == null or not is_instance_valid(holder):
+			## Recree un spacer a l'index de la card.
+			var h := maxf(maxf(card.size.y, card.custom_minimum_size.y), 72.0)
+			if _slot_enter_targets.has(board_slot):
+				h = maxf(h, (_slot_enter_targets[board_slot] as Rect2).size.y)
+			var idx := card.get_index()
+			holder = _make_slot_spacer(h, board_slot)
+			mission_list.add_child(holder)
+			mission_list.move_child(holder, idx)
+			_slot_holders[board_slot] = holder
+			target_rect = _slot_enter_targets.get(board_slot, holder.get_global_rect()) as Rect2
+		card.get_parent().remove_child(card)
+
+	await _animate_ghost_into_rect(card, target_rect)
+
+	## Swap atomique spacer -> card (meme frame, pas de collapse du slot 3).
+	if holder != null and is_instance_valid(holder) and not holder.is_queued_for_deletion():
+		var idx2 := holder.get_index()
+		var list := holder.get_parent() as Control
+		if list != null:
+			list.remove_child(holder)
+			if card.get_parent() != list:
+				list.add_child(card)
+			list.move_child(card, idx2)
+		_slot_holders.erase(board_slot)
+		holder.queue_free()
+	elif card.get_parent() != mission_list:
+		mission_list.add_child(card)
+		_insert_card_sorted_by_board_slot(card)
+
+	if is_instance_valid(card):
+		card.modulate.a = 1.0
+		card.visible = true
+		card.remove_meta("pending_enter")
+		card.remove_meta("enter_animating")
+	_slot_enter_targets.erase(board_slot)
+	_entering_board_slots.erase(board_slot)
+	_sort_mission_list_children()
+
+
+func _find_mission_list_card_for_slot(board_slot: int) -> Control:
+	if mission_list == null or board_slot < 0:
+		return null
+	for c in mission_list.get_children():
+		if not is_instance_valid(c) or c.is_queued_for_deletion() or not (c is Control):
+			continue
+		var ctrl := c as Control
+		if bool(ctrl.get_meta("slot_holder", false)):
+			continue
+		if int(ctrl.get_meta("board_slot", -1)) == board_slot:
+			return ctrl
+	return null
+
+
+func _clear_slot_holder(board_slot: int) -> void:
+	if _slot_holders.has(board_slot):
+		var holder: Control = _slot_holders[board_slot] as Control
+		_slot_holders.erase(board_slot)
+		if is_instance_valid(holder):
+			holder.queue_free()
+	_slot_enter_targets.erase(board_slot)
+	_entering_board_slots.erase(board_slot)
+
+
+func _insert_card_sorted_by_board_slot(card: Control) -> void:
+	if not is_instance_valid(card) or mission_list == null:
+		return
+	var slot := int(card.get_meta("board_slot", 9999))
+	var insert_at := mission_list.get_child_count() - 1
+	for i in mission_list.get_child_count():
+		var c := mission_list.get_child(i)
+		if c == card or not is_instance_valid(c) or not (c is Control):
+			continue
+		var other_slot := int((c as Control).get_meta("board_slot", 9999))
+		if other_slot > slot:
+			insert_at = i
+			break
+	mission_list.move_child(card, clampi(insert_at, 0, mission_list.get_child_count() - 1))
+
+
+func _play_pending_card_enters() -> void:
+	## Legacy / rebuild path.
+	_card_enter_scheduled = false
+	if _pending_card_enter_slots.is_empty() or mission_list == null:
+		_pending_card_enter_slots.clear()
+		return
+	_pending_card_enter_slots.clear()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if mission_list == null or not is_instance_valid(mission_list):
+		return
+	_sort_mission_list_children()
+	await get_tree().process_frame
+	var to_enter: Array[Control] = []
+	for c in mission_list.get_children():
+		if not is_instance_valid(c) or c.is_queued_for_deletion():
+			continue
+		if not (c is Control):
+			continue
+		var ctrl := c as Control
+		if bool(ctrl.get_meta("pending_enter", false)):
+			to_enter.append(ctrl)
+	for ctrl in to_enter:
+		if not is_instance_valid(ctrl):
+			continue
+		var bs := int(ctrl.get_meta("board_slot", -1))
+		## Pendant l'anim : sortir la card du layout, remettre un spacer.
+		var target := ctrl.get_global_rect()
+		if _slot_enter_targets.has(bs):
+			target = _slot_enter_targets[bs] as Rect2
+		var h := maxf(maxf(target.size.y, ctrl.custom_minimum_size.y), 72.0)
+		var idx := ctrl.get_index()
+		var parent := ctrl.get_parent() as Control
+		if parent != null:
+			var spacer := _make_slot_spacer(h, bs)
+			parent.add_child(spacer)
+			parent.move_child(spacer, idx)
+			_slot_holders[bs] = spacer
+			parent.remove_child(ctrl)
+			await get_tree().process_frame
+			if is_instance_valid(spacer):
+				target = spacer.get_global_rect()
+				if target.size.x < 4.0:
+					target.size.x = mission_list.size.x
+				if target.size.y < 4.0:
+					target.size.y = h
+		await _animate_ghost_into_rect(ctrl, target)
+		## Swap atomique spacer -> card.
+		if _slot_holders.has(bs):
+			var sp: Control = _slot_holders[bs] as Control
+			if sp != null and is_instance_valid(sp) and not sp.is_queued_for_deletion():
+				var sp_idx := sp.get_index()
+				var list2 := sp.get_parent() as Control
+				if list2 != null:
+					list2.remove_child(sp)
+					if ctrl.get_parent() != list2:
+						list2.add_child(ctrl)
+					list2.move_child(ctrl, sp_idx)
+				_slot_holders.erase(bs)
+				sp.queue_free()
+			elif ctrl.get_parent() != mission_list:
+				mission_list.add_child(ctrl)
+		elif ctrl.get_parent() != mission_list:
+			mission_list.add_child(ctrl)
+		if is_instance_valid(ctrl):
+			ctrl.modulate.a = 1.0
+			ctrl.visible = true
+			ctrl.remove_meta("pending_enter")
+			ctrl.remove_meta("enter_animating")
+		_slot_enter_targets.erase(bs)
+		_entering_board_slots.erase(bs)
+
+
+func _animate_ghost_into_rect(source: Control, target_rect: Rect2) -> void:
+	## Ghost flottant uniquement ? la place dans le VBox reste tenue par le spacer.
+	if source == null or not is_instance_valid(source):
+		return
+	if target_rect.size.x < 4.0 or target_rect.size.y < 4.0:
+		return
+	var ghost := source.duplicate() as Control
+	if ghost == null:
+		return
+	ghost.visible = false
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.modulate = Color(1, 1, 1, 1)
+	add_child(ghost)
+	ghost.top_level = true
+	ghost.z_index = 40
+	ghost.size = target_rect.size
+	ghost.global_position = target_rect.position - Vector2(target_rect.size.x + 40.0, 0.0)
+	ghost.visible = true
+	var tw := create_tween()
+	tw.tween_property(ghost, "global_position", target_rect.position, 0.32).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	await tw.finished
+	if is_instance_valid(ghost):
+		ghost.queue_free()
+
+
+func _animate_card_enter_to_rect(panel: Control, target_rect: Rect2) -> void:
+	## Compat : anime un ghost puis revele la card (reserve la place via modulate, pas visible=false).
+	if not is_instance_valid(panel):
+		return
+	if bool(panel.get_meta("enter_animating", false)):
+		return
+	var board_slot := int(panel.get_meta("board_slot", -1))
+	panel.set_meta("enter_animating", true)
+	panel.remove_meta("pending_enter")
+	if board_slot >= 0:
+		_entering_board_slots[board_slot] = true
+	## Garde la place dans le VBox (visible=false ferait remonter les cards du dessous).
+	panel.visible = true
+	panel.modulate.a = 0.0
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	if target_rect.size.x < 4.0 or target_rect.size.y < 4.0:
+		await get_tree().process_frame
+		if is_instance_valid(panel):
+			target_rect = panel.get_global_rect()
+	if target_rect.size.x < 4.0 or target_rect.size.y < 4.0:
+		if is_instance_valid(panel):
+			panel.modulate.a = 1.0
+			panel.mouse_filter = Control.MOUSE_FILTER_STOP
+			panel.remove_meta("enter_animating")
+		_entering_board_slots.erase(board_slot)
+		return
+
+	await _animate_ghost_into_rect(panel, target_rect)
+
+	if is_instance_valid(panel):
+		panel.modulate.a = 1.0
+		panel.visible = true
+		panel.mouse_filter = Control.MOUSE_FILTER_STOP
+		panel.remove_meta("enter_animating")
+	_entering_board_slots.erase(board_slot)
+
+
+func _animate_card_enter_from_left(panel: Control) -> void:
+	## Compat : mesure le rect actuel puis delegue.
+	if not is_instance_valid(panel):
+		return
+	await get_tree().process_frame
+	if not is_instance_valid(panel):
+		return
+	var bs := int(panel.get_meta("board_slot", -1))
+	var target := panel.get_global_rect()
+	if _slot_enter_targets.has(bs):
+		target = _slot_enter_targets[bs] as Rect2
+	await _animate_card_enter_to_rect(panel, target)
+
+
+func _play_level_ups_sequence(from_level: int, to_level: int) -> void:
+	if to_level <= from_level:
+		return
+	for lv in range(from_level + 1, to_level + 1):
+		await _play_level_up_burst(lv)
+	## Premier passage nv.1 -> nv.2 : tuto arbre de competences.
+	if from_level < 2 and to_level >= 2 and not GameState.skill_tree_intro_seen:
+		_on_tutorial_nudge(&"skill_tree")
+
+
+func _play_level_up_burst(new_level: int) -> void:
+	var host := Control.new()
+	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host.top_level = true
+	host.z_index = 200
+	add_child(host)
+	var vr := get_viewport_rect()
+	host.global_position = vr.get_center()
+
+	var col := VBoxContainer.new()
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col.add_theme_constant_override("separation", 6)
+	col.alignment = BoxContainer.ALIGNMENT_CENTER
+	host.add_child(col)
+
+	var icon := TextureRect.new()
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.custom_minimum_size = Vector2(72, 72)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if _textures.has("ui_sparkle"):
+		icon.texture = _textures["ui_sparkle"]
+	elif _textures.has("ui_coin_skill"):
+		icon.texture = _textures["ui_coin_skill"]
+	elif _textures.has("ui_xp"):
+		icon.texture = _textures["ui_xp"]
+	col.add_child(icon)
+
+	var lab := Label.new()
+	lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	lab.text = "Niveau %d !" % new_level
+	lab.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lab.add_theme_font_size_override("font_size", 28)
+	lab.add_theme_color_override("font_color", Color(0.98, 0.95, 0.72))
+	lab.add_theme_color_override("font_outline_color", Color(0.12, 0.18, 0.12, 0.9))
+	lab.add_theme_constant_override("outline_size", 6)
+	col.add_child(lab)
+
+	await get_tree().process_frame
+	if not is_instance_valid(host):
+		return
+	## Centre le bloc.
+	host.global_position = vr.get_center() - col.size * 0.5
+	host.pivot_offset = col.size * 0.5
+	host.scale = Vector2(0.55, 0.55)
+	host.modulate.a = 0.0
+	var tw := create_tween()
+	tw.tween_property(host, "scale", Vector2(1.12, 1.12), 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(host, "modulate:a", 1.0, 0.14)
+	tw.tween_property(host, "scale", Vector2.ONE, 0.12)
+	tw.tween_interval(0.55)
+	tw.tween_property(host, "modulate:a", 0.0, 0.28)
+	tw.parallel().tween_property(host, "global_position", host.global_position + Vector2(0, -28), 0.28)
+	await tw.finished
+	if is_instance_valid(host):
+		host.queue_free()
+
+
+func _play_order_success_fx(
+	gold_from: Vector2,
+	gold_amount: int,
+	face_rect: Rect2,
+	face_tex: Texture2D
+) -> void:
+	## Legacy fallback (auto-delivery / anciens appels).
+	var _unused_face := face_rect
+	var _unused_tex := face_tex
+	await _fly_order_rewards(gold_from, gold_from, gold_amount, 0)
+
+
 func _stock_chip_center_global(crop_id: StringName) -> Vector2:
 	for chip in _seed_buttons:
 		if not is_instance_valid(chip):
 			continue
 		if chip.get_meta("crop_id", &"") != crop_id:
 			continue
+		## Vise le bandeau stock en bas de la card.
+		if chip.has_meta("stock_label"):
+			var sc: Variant = chip.get_meta("stock_label")
+			if sc is Control and is_instance_valid(sc):
+				return (sc as Control).get_global_rect().get_center()
 		return chip.get_global_rect().get_center()
 	if seed_row != null and is_instance_valid(seed_row):
 		return seed_row.get_global_rect().get_center()
@@ -5346,12 +6657,10 @@ func _make_green_star_texture() -> Texture2D:
 
 
 func _on_xp(current: int, required: int) -> void:
-	xp_bar.max_value = maxf(1.0, float(required))
-	xp_bar.value = mini(current, required)
-	xp_label.text = "Prochain niveau : %d/%d XP" % [current, required]
+	if _xp_anim_lock:
+		return
+	_apply_xp_bar_visual(current, required)
 	xp_bar.modulate = Color.WHITE
-	xp_label.add_theme_font_size_override("font_size", 10)
-	_style_bar_overlay_label(xp_label)
 	_refresh_player_hud()
 
 
@@ -5376,6 +6685,7 @@ func _on_prestige() -> void:
 
 
 func _refresh_all() -> void:
+	_hud_player_level = GameState.player_level
 	_on_money(GameState.money)
 	_on_xp(GameState.xp, GameState.xp_required)
 	_on_level(GameState.player_level, GameState.skill_points)

@@ -162,12 +162,12 @@ func _build() -> void:
 	root.add_child(actions)
 
 	var reset_btn := _make_action_btn("Reset", Color(0.94, 0.82, 0.28, 0.96), Color(0.72, 0.58, 0.14), Vector2(120, 40))
-	reset_btn.tooltip_text = "Tout remettre au stock"
+	reset_btn.tooltip_text = ""
 	reset_btn.pressed.connect(_on_reset)
 	actions.add_child(reset_btn)
 
 	var cancel := _make_action_btn("Annuler", Color(0.86, 0.52, 0.48, 0.92), Color(0.62, 0.32, 0.30), Vector2(120, 40))
-	cancel.tooltip_text = "Revenir au terrain d’avant Editer"
+	cancel.tooltip_text = ""
 	cancel.pressed.connect(_on_cancel)
 	actions.add_child(cancel)
 
