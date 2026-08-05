@@ -79,7 +79,7 @@ stretch_mode = 5
 [node name="Brand" type="Label" parent="Root/TopBar/TopMargin/TopRow/BrandBlock" unique_id=2053323041]
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
-text = "Crop Express Idle"
+text = "Crops Express Idle"
 
 [node name="StatHeat" type="PanelContainer" parent="Root/TopBar/TopMargin/TopRow" unique_id=1304274097]
 unique_name_in_owner = true

@@ -3,7 +3,7 @@ description: Style artistique obligatoire pour toute génération d'images du je
 alwaysApply: true
 ---
 
-# Style visuel Crop Express Idle (génération d'images)
+# Style visuel Crops Express Idle (génération d'images)
 
 Quand l'utilisateur demande de générer / régénérer des assets (cultures, icônes, UI, portraits, etc.), **toujours** utiliser ce style — sauf demande explicite contraire.
 

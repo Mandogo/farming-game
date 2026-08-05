@@ -1,9 +1,9 @@
-# Roadmap Crop Express Idle
+# Roadmap Crops Express Idle
 
 Fichier vivant — coche, ajoute, réordonne librement.  
 Spec détaillée auto : [`automation.md`](automation.md)
 
-**Nom Steam / produit :** Crop Express Idle (ex-Greenhouse Idle) — idle + commandes/livraison ; auto hors titre.
+**Nom Steam / produit :** Crops Express Idle (ex-Greenhouse Idle) — idle + commandes/livraison ; auto hors titre.
 
 Légende : `[ ]` à faire · `[~]` en cours · `[x]` fait · `[?]` idée / à trancher
 
@@ -96,7 +96,7 @@ Ajoute ici dès que ça te passe par la tête (pas priorisé).
 
 > Espace libre pour décisions, liens, captures…
 
-- **Branding :** Crop Express Idle — icône camion teal + caisse légumes + pièces (`icon.png` fenêtre / Steam, `assets/textures/ui/logo.png` UI).
+- **Branding :** Crops Express Idle — icône camion teal + caisse légumes + pièces (`icon.png` fenêtre / Steam, `assets/textures/ui/logo.png` UI).
 - Fertiliseur v1 : hover vertical + salve / **2 s** (8 cases autour, **−0,5 s**) ; ombre sol + contour blanc ; cercle de portée à la pose
 - Save : `SAVE_VERSION = 8` — drop des saves pré-grille
 -

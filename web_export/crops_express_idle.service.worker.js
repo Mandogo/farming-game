@@ -4,9 +4,9 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1785959152|27463486386';
+const CACHE_VERSION = '1785959300|27463488001';
 /** @type {string} */
-const CACHE_PREFIX = 'Crop Express Idl-sw-cache-';
+const CACHE_PREFIX = 'Crops Express Idl-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
 /** @type {string} */
 const OFFLINE_URL = 'crops_express_idle.offline.html';
@@ -14,7 +14,7 @@ const OFFLINE_URL = 'crops_express_idle.offline.html';
 const ENSURE_CROSSORIGIN_ISOLATION_HEADERS = true;
 // Files that will be cached on load.
 /** @type {string[]} */
-const CACHED_FILES = ["crops_express_idle.html","crops_express_idle.js","crops_express_idle.offline.html","crops_express_idle.icon.png","crops_express_idle.apple-touch-icon.png","crops_express_idle.audio.worklet.js","crops_express_idle.audio.position.worklet.js"];
+const CACHED_FILES = ["crops_express_idle.html","crops_express_idle.js","crops_express_idle.offline.html","crops_express_idle.icon.png","crops_express_idle.apple-touch-icon.png","crops_express_idle.audio.worklet.js","crops_express_idle.audio.position.worklet.js","loading_logo.png","index.html"];
 // Files that we might not want the user to preload, and will only be cached on first load.
 /** @type {string[]} */
 const CACHEABLE_FILES = ["crops_express_idle.wasm","crops_express_idle.pck"];

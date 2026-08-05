@@ -2637,13 +2637,14 @@ func _bind_tabs() -> void:
 		strip_st.set_corner_radius_all(12)
 		strip_st.content_margin_left = 4
 		strip_st.content_margin_right = 4
-		strip_st.content_margin_top = 4
-		strip_st.content_margin_bottom = 4
+		strip_st.content_margin_top = 3
+		strip_st.content_margin_bottom = 3
 		strip_st.shadow_color = Color(0.08, 0.12, 0.10, 0.24)
 		strip_st.shadow_size = 4
 		strip_st.shadow_offset = Vector2(0, 2)
 		strip.add_theme_stylebox_override("panel", strip_st)
-		strip.custom_minimum_size = Vector2(0, 50)
+		strip.custom_minimum_size = Vector2(0, 56)
+		strip.clip_contents = false
 	var rail: HBoxContainer = %TabRail
 	for c in rail.get_children():
 		c.free()
@@ -2652,18 +2653,22 @@ func _bind_tabs() -> void:
 	group.allow_unpress = false
 	rail.add_theme_constant_override("separation", 3)
 	rail.alignment = BoxContainer.ALIGNMENT_CENTER
+	rail.clip_contents = false
 	for tab in RIGHT_TABS:
 		var btn := Button.new()
 		btn.toggle_mode = true
 		btn.button_group = group
 		btn.focus_mode = Control.FOCUS_NONE
-		btn.custom_minimum_size = Vector2(0, 40)
+		btn.custom_minimum_size = Vector2(0, 46)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		btn.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		btn.theme_type_variation = &"ButtonTab"
-		btn.expand_icon = true
+		btn.expand_icon = false
 		btn.text = str(tab["title"])
-		btn.add_theme_font_size_override("font_size", 11)
+		btn.add_theme_font_size_override("font_size", 13)
+		btn.add_theme_constant_override("icon_max_width", 32)
+		btn.add_theme_constant_override("h_separation", 5)
+		btn.clip_text = false
 		btn.tooltip_text = ""
 		var icon_key: String = tab["icon"]
 		if _textures.has(icon_key):
@@ -2799,10 +2804,10 @@ func _style_side_tab_button(btn: Button, tab_id: String, selected: bool) -> void
 		btn.add_theme_color_override("font_pressed_color", Color(0.10, 0.16, 0.10))
 		btn.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.35))
 		btn.add_theme_constant_override("outline_size", 1)
-	normal.content_margin_left = 4
-	normal.content_margin_right = 4
-	normal.content_margin_top = 5
-	normal.content_margin_bottom = 5
+	normal.content_margin_left = 5
+	normal.content_margin_right = 5
+	normal.content_margin_top = 6
+	normal.content_margin_bottom = 6
 	hover = normal.duplicate() as StyleBoxFlat
 	if not selected:
 		hover.bg_color = Color(0.98, 0.99, 0.96, 0.92)
@@ -2828,7 +2833,9 @@ func _style_side_tab_button(btn: Button, tab_id: String, selected: bool) -> void
 	btn.add_theme_stylebox_override("hover", hover)
 	btn.add_theme_stylebox_override("pressed", pressed)
 	btn.add_theme_stylebox_override("focus", pressed)
-	btn.add_theme_font_size_override("font_size", 11)
+	btn.add_theme_font_size_override("font_size", 13)
+	btn.add_theme_constant_override("icon_max_width", 32)
+	btn.add_theme_constant_override("h_separation", 5)
 
 
 func _show_tab(id: String) -> void:
@@ -4515,8 +4522,11 @@ func _on_harvested(plot_index: int, crop_id: StringName, amount: int, via_garden
 
 
 func _rebuild_side() -> void:
-	for c in side_content.get_children():
-		c.queue_free()
+	## free() immédiat : queue_free laisse les anciennes lignes visibles 1 frame (= texte « dédoublé »).
+	while side_content.get_child_count() > 0:
+		var c := side_content.get_child(0)
+		side_content.remove_child(c)
+		c.free()
 	side_content.add_theme_constant_override("separation", 8)
 	var tab := _tab_def(_current_tab)
 	if tab.get("locked", false):
@@ -4599,17 +4609,29 @@ func _fill_boosts() -> void:
 	var sp_now := GameState.speed_pct()
 	var sp_gain := int(GameState.SPEED_PER_LEVEL * 100.0)
 	var sp_maxed := sp >= sp_max
-	var sp_sub := "MAX (actuel %d%%)" % sp_now if sp_maxed else "Gain +%d%% (actuel %d%%)" % [sp_gain, sp_now]
+	var sp_segs: Array = (
+		[{"t": "MAX (actuel ", "b": false}, {"t": "%d%%" % sp_now, "b": true}, {"t": ")", "b": false}]
+		if sp_maxed
+		else [
+			{"t": "Vitesse ", "b": false},
+			{"t": "+%d%%" % sp_gain, "b": true},
+			{"t": " (actuel ", "b": false},
+			{"t": "%d%%" % sp_now, "b": true},
+			{"t": ")", "b": false},
+		]
+	)
 	side_content.add_child(_shop_row(
 		"Temps de pousse",
-		sp_sub,
+		"",
 		sp, sp_max,
 		"MAX" if sp_maxed else str(GameState.get_boost_cost("speed")),
 		(not sp_maxed) and GameState.money >= GameState.get_boost_cost("speed"),
 		func(): GameState.buy_boost("speed"); _rebuild_side(),
 		"ui_shop_speed",
 		not sp_maxed,
-		"speed"
+		"speed",
+		false,
+		sp_segs
 	))
 
 	var cl := GameState.click_level
@@ -4620,17 +4642,28 @@ func _fill_boosts() -> void:
 	if gt > 0:
 		power_next *= 1.0 + 0.10 * float(gt)
 	var cl_maxed := cl >= cl_max
-	var cl_sub := ("MAX (actuel %.1fs)" % power_now) if cl_maxed else ("Clic \u2192 %.1fs (actuel \u2192 %.1fs)" % [power_next, power_now])
+	var cl_segs: Array = (
+		[{"t": "MAX (actuel ", "b": false}, {"t": _fmt_shop_seconds(power_now), "b": true}, {"t": ")", "b": false}]
+		if cl_maxed
+		else [
+			{"t": _fmt_shop_seconds(power_next), "b": true},
+			{"t": " par clic (actuel ", "b": false},
+			{"t": _fmt_shop_seconds(power_now), "b": true},
+			{"t": ")", "b": false},
+		]
+	)
 	side_content.add_child(_shop_row(
 		"Puissance de clic",
-		cl_sub,
+		"",
 		cl, cl_max,
 		"MAX" if cl_maxed else str(GameState.get_boost_cost("click")),
 		(not cl_maxed) and GameState.money >= GameState.get_boost_cost("click"),
 		func(): GameState.buy_boost("click"); _rebuild_side(),
 		"ui_shop_click",
 		not cl_maxed,
-		"click"
+		"click",
+		false,
+		cl_segs
 	))
 
 	var yl := GameState.yield_level
@@ -4638,35 +4671,55 @@ func _fill_boosts() -> void:
 	var y_now := GameState.yield_pct()
 	var y_gain := int(GameState.DOUBLE_DROP_PER_LEVEL * 100.0)
 	var yl_maxed := yl >= yl_max
-	var yl_sub := "MAX (actuel %d%%)" % y_now if yl_maxed else "Chance +%d%% (actuel %d%%)" % [y_gain, y_now]
+	var yl_segs: Array = (
+		[{"t": "MAX (actuel ", "b": false}, {"t": "%d%%" % y_now, "b": true}, {"t": ")", "b": false}]
+		if yl_maxed
+		else [
+			{"t": "Chance ", "b": false},
+			{"t": "+%d%%" % y_gain, "b": true},
+			{"t": " (actuel ", "b": false},
+			{"t": "%d%%" % y_now, "b": true},
+			{"t": ")", "b": false},
+		]
+	)
 	side_content.add_child(_shop_row(
-		"Chance double drop",
-		yl_sub,
+		"Chance double récolte",
+		"",
 		yl, yl_max,
 		"MAX" if yl_maxed else str(GameState.get_boost_cost("yield")),
 		(not yl_maxed) and GameState.money >= GameState.get_boost_cost("yield"),
 		func(): GameState.buy_boost("yield"); _rebuild_side(),
 		"ui_shop_frenzy",
 		not yl_maxed,
-		"yield"
+		"yield",
+		false,
+		yl_segs
 	))
 
 	var plots_now := GameState.unlocked_plots
 	var pl_maxed := plots_now >= GameState.MAX_PLOTS
-	var pl_sub := "MAX (%d)" % plots_now if pl_maxed else "+1 parcelle auto (actuel %d)%s" % [
-		plots_now,
-		" - Editer pour reorganiser" if GameState.is_terrain_edit_unlocked() else ""
-	]
+	var pl_segs: Array = (
+		[{"t": "MAX (", "b": false}, {"t": str(plots_now), "b": true}, {"t": ")", "b": false}]
+		if pl_maxed
+		else [
+			{"t": "+1", "b": true},
+			{"t": " nouvelle parcelle (actuel ", "b": false},
+			{"t": str(plots_now), "b": true},
+			{"t": ")", "b": false},
+		]
+	)
 	side_content.add_child(_shop_row(
 		"Nouvelle parcelle",
-		pl_sub,
+		"",
 		plots_now, GameState.MAX_PLOTS,
 		"MAX" if pl_maxed else str(GameState.get_boost_cost("plot")),
 		(not pl_maxed) and GameState.money >= GameState.get_boost_cost("plot"),
 		func(): GameState.buy_boost("plot"); _rebuild_side(); _update_edit_terrain_button(); call_deferred("_center_field"),
 		"ui_shop_plot",
 		not pl_maxed,
-		"plot"
+		"plot",
+		false,
+		pl_segs
 	))
 
 	side_content.add_child(_shop_section_title("Automatisation", Color(0.38, 0.48, 0.62)))
@@ -4775,6 +4828,47 @@ func _shop_section_title(text: String, accent: Color) -> Control:
 	return wrap
 
 
+func _fmt_shop_seconds(v: float) -> String:
+	if is_equal_approx(v, roundf(v)):
+		return "%ds" % int(roundf(v))
+	return "%.1fs" % v
+
+
+## Ligne méta : Labels du thème UI (même police que le reste). Valeurs juste un peu plus foncées.
+func _shop_meta_line(segments: Array) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 0)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	for seg in segments:
+		if typeof(seg) != TYPE_DICTIONARY:
+			continue
+		var lab := Label.new()
+		lab.text = str(seg.get("t", ""))
+		lab.add_theme_font_size_override("font_size", 10)
+		lab.add_theme_constant_override("outline_size", 0)
+		lab.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0))
+		if bool(seg.get("b", false)):
+			lab.add_theme_color_override("font_color", Color(0.22, 0.30, 0.20))
+		else:
+			lab.add_theme_color_override("font_color", Color(0.40, 0.48, 0.40))
+		lab.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		lab.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(lab)
+	return row
+
+
+func _shop_meta_from_subtitle(level: int, level_max: int, subtitle_segs: Array, plain_fallback: String, show_prefix: bool) -> Control:
+	var segs: Array = []
+	if show_prefix:
+		segs.append({"t": "%d/%d" % [level, level_max], "b": true})
+		segs.append({"t": " - ", "b": false})
+	if subtitle_segs.is_empty():
+		segs.append({"t": plain_fallback, "b": false})
+	else:
+		segs.append_array(subtitle_segs)
+	return _shop_meta_line(segs)
+
+
 func _shop_row(
 	title: String,
 	subtitle: String,
@@ -4786,7 +4880,8 @@ func _shop_row(
 	icon_key: String = "",
 	show_coin: bool = true,
 	boost_id: String = "",
-	show_lock: bool = false
+	show_lock: bool = false,
+	subtitle_segs: Array = []
 ) -> PanelContainer:
 	var panel := PanelContainer.new()
 	var st := StyleBoxFlat.new()
@@ -4889,18 +4984,8 @@ func _shop_row(
 	bar.add_theme_stylebox_override("fill", fill)
 	mid.add_child(bar)
 
-	var meta := Label.new()
-	## Ex. ? 0/50 ? Gain +4% (actuel 0%) ?
-	if show_lock or (level_max <= 1 and level == 0 and not show_coin):
-		meta.text = subtitle
-	else:
-		meta.text = "%d/%d - %s" % [level, level_max, subtitle]
-	meta.add_theme_font_size_override("font_size", 10)
-	meta.add_theme_color_override("font_color", Color(0.40, 0.48, 0.40))
-	meta.clip_text = true
-	meta.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mid.add_child(meta)
+	var show_prefix := not (show_lock or (level_max <= 1 and level == 0 and not show_coin))
+	mid.add_child(_shop_meta_from_subtitle(level, level_max, subtitle_segs, subtitle, show_prefix))
 
 	# Bouton achat seul ? droite ? l?g?re marge chiffre / pi?ce
 	var buy := PanelContainer.new()
@@ -5002,7 +5087,7 @@ func _boost_info_meta(boost_id: String) -> Dictionary:
 			}
 		"yield":
 			return {
-				"title": "Chance double drop",
+				"title": "Chance double récolte",
 				"col": "Chance",
 				"max": GameState.MAX_YIELD_LEVEL,
 				"current": GameState.yield_level,

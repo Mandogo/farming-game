@@ -1,4 +1,4 @@
-# Crop Express Idle
+# Crops Express Idle
 
 Idle farming 2D — commandes clients, or, XP, skills, combo livraisons, prestige, reliques.
 

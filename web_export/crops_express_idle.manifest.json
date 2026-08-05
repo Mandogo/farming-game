@@ -1,1 +1,26 @@
-{"background_color":"#85a878","display":"standalone","icons":[{"sizes":"144x144","src":"crops_express_idle.144x144.png","type":"image/png"},{"sizes":"180x180","src":"crops_express_idle.180x180.png","type":"image/png"},{"sizes":"512x512","src":"crops_express_idle.512x512.png","type":"image/png"}],"name":"Crop Express Idle","orientation":"any","start_url":"./crops_express_idle.html"}
+{
+  "background_color": "#1a1f1c",
+  "theme_color": "#1a1f1c",
+  "display": "standalone",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "sizes": "144x144",
+      "src": "crops_express_idle.144x144.png",
+      "type": "image/png"
+    },
+    {
+      "sizes": "180x180",
+      "src": "crops_express_idle.180x180.png",
+      "type": "image/png"
+    },
+    {
+      "sizes": "512x512",
+      "src": "crops_express_idle.512x512.png",
+      "type": "image/png"
+    }
+  ],
+  "name": "Crops Express Idle",
+  "short_name": "Crops Express",
+  "start_url": "./index.html"
+}

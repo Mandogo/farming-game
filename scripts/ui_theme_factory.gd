@@ -60,8 +60,8 @@ static func build() -> Theme:
 	theme.set_color("font_hover_color", "ButtonTab", text)
 	theme.set_color("font_pressed_color", "ButtonTab", text)
 	theme.set_color("font_disabled_color", "ButtonTab", text_muted)
-	theme.set_constant("h_separation", "ButtonTab", 0)
-	theme.set_constant("icon_max_width", "ButtonTab", 34)
+	theme.set_constant("h_separation", "ButtonTab", 5)
+	theme.set_constant("icon_max_width", "ButtonTab", 32)
 
 	var strip := _flat(Color(1.0, 1.0, 1.0, 0.14), Color(0.20, 0.28, 0.22, 0.10), 10, 0, 2, 3, Vector2(0, 1))
 	strip.shadow_color = Color(0.08, 0.12, 0.10, 0.20)
