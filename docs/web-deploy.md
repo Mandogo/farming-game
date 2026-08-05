@@ -4,6 +4,16 @@ L’export Web vit dans **`web_export/`** (pas dans `docs/`).
 
 URL : **https://mandogo.github.io/farming-game/**
 
+## Prérequis (une seule fois)
+
+Sur GitHub → **Settings → Pages** :
+
+1. **Build and deployment → Source** = **GitHub Actions** (pas “Deploy from a branch”)
+2. Custom domain = vide
+3. Enregistre
+
+Sans ça, le workflow plante avec `Get Pages site failed / Not Found`.
+
 ## Déploiement
 
 1. Godot → **Export → Web** → `web_export/crops_express_idle.html`
@@ -11,9 +21,8 @@ URL : **https://mandogo.github.io/farming-game/**
    ```powershell
    Copy-Item -Force web_export\crops_express_idle.html web_export\index.html
    ```
-3. Commit + push `web_export/` → le workflow **Deploy GitHub Pages** publie le site.
-
-Settings → Pages → Source = **GitHub Actions**. Custom domain = vide.
+3. Commit + push `web_export/` → le workflow **Deploy GitHub Pages** publie le site.  
+   Ou lance manuellement : Actions → Deploy GitHub Pages → Run workflow.
 
 ## Mobile
 
