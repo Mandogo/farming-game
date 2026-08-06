@@ -9,25 +9,24 @@ on:
   workflow_dispatch:
 
 # Prérequis (1 fois) : Settings → Pages → Build and deployment → Source = "GitHub Actions"
-# Sans ça, configure-pages échoue avec "Get Pages site failed / Not Found".
 
 permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write
 
-# Ne PAS annuler un déploiement en cours : la file GitHub Pages met souvent
-# 10–20+ min ; cancel-in-progress:true provoquait "Deployment cancelled" / reruns.
+# Ne pas annuler un déploiement Pages déjà lancé (file d'attente longue).
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact_id }}
+      artifact_name: github-pages-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@v5
 
@@ -36,7 +35,6 @@ jobs:
           set -euo pipefail
           mkdir -p _site
           find web_export -maxdepth 1 -type f ! -name '*.import' -exec cp -t _site {} +
-          ## Toujours aligner index.html sur l'export Godot (évite une vieille PWA sur mobile).
           if [ -f _site/crops_express_idle.html ]; then
             cp -f _site/crops_express_idle.html _site/index.html
           fi
@@ -48,15 +46,111 @@ jobs:
           ls -lah _site
           du -sh _site
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      # Re-run = nouvel artefact du même nom → deploy-pages plante (« Artifact count is 2 »).
+      - name: Delete stale github-pages artifacts from this run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.actions.listWorkflowRunArtifacts({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+            for (const artifact of data.artifacts) {
+              if (String(artifact.name).startsWith('github-pages')) {
+                core.info(`Deleting stale artifact ${artifact.name} (${artifact.id})`);
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id,
+                });
+              }
+            }
 
-      - uses: actions/upload-pages-artifact@v4
+      # Nom unique par tentative + id passé au job deploy.
+      - name: Upload Pages artifact
+        id: upload
+        uses: actions/upload-pages-artifact@v4
         with:
           path: _site
+          name: github-pages-${{ github.run_attempt }}
 
-      # Timeout défaut = 10 min ; la file Pages dépasse souvent ça → faux échec.
-      - id: deployment
-        uses: actions/deploy-pages@v4
-        with:
-          timeout: 1800000
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # actions/deploy-pages@v4 : timeout max forcé à 10 min + cancel file Pages.
+      # Déploiement manuel OIDC + poll 45 min.
+      - name: Deploy to GitHub Pages (long poll)
+        id: deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+          PAGES_BUILD_VERSION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${ARTIFACT_ID}" ]; then
+            echo "::error::artifact_id manquant (upload Pages)"
+            exit 1
+          fi
+          echo "Using artifact_id=${ARTIFACT_ID}"
+
+          echo "::group::OIDC token"
+          AUDIENCE="https://github.com/actions/deploy-pages"
+          OID_JSON="$(curl -fsS -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=$(python3 -c "import urllib.parse; print(urllib.parse.quote('''${AUDIENCE}''', safe=''))")")"
+          OIDC_TOKEN="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])' <<<"$OID_JSON")"
+          test -n "$OIDC_TOKEN"
+          echo "::endgroup::"
+
+          echo "::group::Create Pages deployment"
+          # gh api -f sends multipart; use raw JSON for numeric artifact_id
+          CREATE_JSON="$(gh api -X POST "repos/${GITHUB_REPOSITORY}/pages/deployments" \
+            --input - <<EOF
+          {
+            "artifact_id": ${ARTIFACT_ID},
+            "pages_build_version": "${PAGES_BUILD_VERSION}",
+            "oidc_token": "${OIDC_TOKEN}"
+          }
+          EOF
+          )"
+          echo "$CREATE_JSON"
+          DEPLOY_ID="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["id"])' <<<"$CREATE_JSON")"
+          PAGE_URL="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("page_url") or "")' <<<"$CREATE_JSON")"
+          echo "deployment_id=${DEPLOY_ID}"
+          if [ -z "$PAGE_URL" ]; then
+            PAGE_URL="https://mandogo.github.io/farming-game/"
+          fi
+          echo "page_url=${PAGE_URL}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+
+          echo "::group::Poll status (max 45 min)"
+          DEADLINE=$((SECONDS + 2700))
+          LAST=""
+          while [ "$SECONDS" -lt "$DEADLINE" ]; do
+            STATUS_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/pages/deployments/${DEPLOY_ID}")"
+            STATE="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(str(d.get("status") or d.get("state") or "unknown").lower())' <<<"$STATUS_JSON")"
+            if [ "$STATE" != "$LAST" ]; then
+              echo "status=${STATE}"
+              LAST="$STATE"
+            fi
+            case "$STATE" in
+              succeed|success|deployed|built)
+                echo "Deploy Pages OK → ${PAGE_URL}"
+                exit 0
+                ;;
+              fail|failure|failed|error|cancelled|canceled)
+                echo "::error::Pages deployment status=${STATE}"
+                echo "$STATUS_JSON"
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          echo "::error::Timeout 45 min (last status=${LAST:-unknown}). Le site peut encore se publier côté GitHub Pages."
+          exit 1
