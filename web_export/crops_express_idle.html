@@ -425,6 +425,67 @@ window.ceiSafeInsets = function () {
 	let loadDone = false;
 	const loadStartedAt = performance.now();
 	const EXPECT_MS = 4500;
+	const LOAD_WATCHDOG_MS = 20000;
+	const BUILD_ID = JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
+
+	/** Purge SW + Cache Storage puis recharge (une seule fois par onglet). */
+	async function ceiHardRefresh(reason) {
+		console.warn('[CEI] Hard refresh:', reason);
+		if (sessionStorage.getItem('cei_hard_refresh') === '1') {
+			sessionStorage.removeItem('cei_hard_refresh');
+			return false;
+		}
+		sessionStorage.setItem('cei_hard_refresh', '1');
+		try {
+			if ('serviceWorker' in navigator) {
+				const regs = await navigator.serviceWorker.getRegistrations();
+				await Promise.all(regs.map((r) => r.unregister()));
+			}
+			if (window.caches && caches.keys) {
+				const keys = await caches.keys();
+				await Promise.all(keys.map((k) => caches.delete(k)));
+			}
+		} catch (e) {
+			console.warn('[CEI] Hard refresh cleanup failed', e);
+		}
+		const url = new URL(window.location.href);
+		url.searchParams.set('cei_cb', String(Date.now()));
+		window.location.replace(url.toString());
+		return true;
+	}
+
+	/** Nouveau build détecté (fileSizes changés) → invalide les caches. */
+	async function ceiCheckBuildDrift() {
+		try {
+			const prev = localStorage.getItem('cei_build_id') || '';
+			if (prev && prev !== BUILD_ID) {
+				localStorage.setItem('cei_build_id', BUILD_ID);
+				return ceiHardRefresh('build_id_changed');
+			}
+			localStorage.setItem('cei_build_id', BUILD_ID);
+		} catch (e) { /* private mode */ }
+		return false;
+	}
+
+	/** Force l'activation d'un SW en waiting + reload si le contrôleur change. */
+	function ceiWatchServiceWorker() {
+		if (!('serviceWorker' in navigator)) return;
+		let reloading = false;
+		navigator.serviceWorker.addEventListener('controllerchange', function () {
+			if (reloading) return;
+			reloading = true;
+			window.location.reload();
+		});
+		navigator.serviceWorker.ready.then(function (reg) {
+			if (reg.waiting) {
+				try { reg.waiting.postMessage('claim'); } catch (e) {}
+			}
+			reg.update().catch(function () {});
+			setInterval(function () { reg.update().catch(function () {}); }, 60000);
+		}).catch(function () {});
+	}
+
+	ceiWatchServiceWorker();
 
 	function targetPct() {
 		if (loadDone) return 1;
@@ -537,6 +598,7 @@ window.ceiSafeInsets = function () {
 		if (mode === 'hidden') {
 			loadDone = true;
 			initializing = false;
+			try { sessionStorage.removeItem('cei_hard_refresh'); } catch (e) {}
 			statusOverlay.remove();
 			maybeShowMobileTip();
 			fitViewport();
@@ -577,6 +639,33 @@ window.ceiSafeInsets = function () {
 		threads: GODOT_THREADS_ENABLED,
 	});
 
+	async function ceiStartGame() {
+		const refreshed = await ceiCheckBuildDrift();
+		if (refreshed) return;
+
+		setTimeout(function () {
+			if (!loadDone && initializing) {
+				ceiHardRefresh('load_watchdog_timeout');
+			}
+		}, LOAD_WATCHDOG_MS);
+
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+				setLoadProgress(current, total);
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+
 	if (missing.length !== 0) {
 		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
 			let serviceWorkerRegistrationPromise;
@@ -605,21 +694,7 @@ window.ceiSafeInsets = function () {
 			displayFailureNotice(missingMsg + missing.join('\n'));
 		}
 	} else {
-		setStatusMode('progress');
-		engine.startGame({
-			'onProgress': function (current, total) {
-				if (current > 0 && total > 0) {
-					statusProgress.value = current;
-					statusProgress.max = total;
-				} else {
-					statusProgress.removeAttribute('value');
-					statusProgress.removeAttribute('max');
-				}
-				setLoadProgress(current, total);
-			},
-		}).then(() => {
-			setStatusMode('hidden');
-		}, displayFailureNotice);
+		ceiStartGame();
 	}
 }());
 		</script>

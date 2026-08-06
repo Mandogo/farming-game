@@ -19,11 +19,21 @@ Sans ça, le workflow plante avec `Get Pages site failed / Not Found`.
 1. Godot → **Export → Web** → `web_export/crops_express_idle.html`
 2. Puis :
    ```powershell
+   python tools/patch_web_sw.py
    Copy-Item -Force web_export\crops_express_idle.html web_export\index.html
    ```
+   (Linux/mac : `python3 tools/patch_web_sw.py && cp -f web_export/crops_express_idle.html web_export/index.html`)
 3. Commit + push `web_export/` → le workflow **Deploy GitHub Pages** publie le site.  
    Le workflow **écrase toujours** `index.html` avec `crops_express_idle.html` (évite une vieille version PWA).  
    Ou lance manuellement : Actions → Deploy GitHub Pages → Run workflow.
+
+### Navigateur bloqué à 92 % ?
+
+Cause typique : **service worker** qui mélange HTML neuf + JS/WASM anciens.  
+Correctifs en place :
+- SW **network-first** pour HTML/JS (`tools/patch_web_sw.py`)
+- **Hard refresh auto** si le chargement dépasse ~20 s (purge caches + reload)
+- Détection de **nouveau build** (`fileSizes`) → invalidation cache
 
 ### Téléphone toujours en ancienne version ?
 
