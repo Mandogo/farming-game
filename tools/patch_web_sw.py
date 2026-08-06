@@ -62,8 +62,8 @@ def patch() -> None:
 	# clients.claim à l'activate
 	if "self.clients.claim()" not in text:
 		text = text.replace(
-			").then(function () {\n\t\t// Enable navigation preload if available.\n\t\treturn ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();\n\t}));\n});",
-			").then(function () {\n\t\t// Enable navigation preload if available.\n\t\treturn ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();\n\t}).then(function () {\n\t\treturn self.clients.claim();\n\t}));\n});",
+			").then(function () {\n\t\t// Enable navigation preload if available.\n\t\treturn ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();\n\t}));",
+			").then(function () {\n\t\t// Enable navigation preload if available.\n\t\treturn ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();\n\t}).then(function () {\n\t\treturn self.clients.claim();\n\t}));",
 		)
 
 	new_fetch = r'''self.addEventListener(

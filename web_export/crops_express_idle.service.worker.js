@@ -34,6 +34,8 @@ self.addEventListener('activate', (event) => {
 	).then(function () {
 		// Enable navigation preload if available.
 		return ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
+	}).then(function () {
+		return self.clients.claim();
 	}));
 });
 
