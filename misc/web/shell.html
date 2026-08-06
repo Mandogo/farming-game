@@ -286,21 +286,23 @@ html, body {
 	font: 700 13px/1 system-ui, sans-serif;
 }
 
-/* Paysage forcé en portrait : rotation CSS (iOS / navigateurs sans lock API) */
+/* Paysage forcé en portrait : le JS pose taille + transform au pixel près */
 #cei-shell {
-	position: relative;
+	position: fixed;
+	inset: 0;
 	width: 100%;
 	height: 100%;
 	overflow: hidden;
 	background: #1a1f1c;
+	transform-origin: top left;
 }
 
 #cei-shell #canvas,
 #cei-shell #status {
 	position: absolute;
 	inset: 0;
-	width: 100%;
-	height: 100%;
+	width: 100% !important;
+	height: 100% !important;
 }
 
 html.cei-portrait,
@@ -309,20 +311,8 @@ body.cei-portrait {
 	background: #1a1f1c;
 	width: 100%;
 	height: 100%;
-}
-
-/* Tourne le jeu en paysage sans écran bloquant */
-body.cei-portrait #cei-shell {
 	position: fixed;
-	top: 0;
-	left: 0;
-	width: 100vh;
-	width: 100dvh;
-	height: 100vw;
-	height: 100dvw;
-	transform: rotate(90deg) translateY(-100%);
-	transform-origin: top left;
-	z-index: 1;
+	inset: 0;
 }
 		</style>
 		$GODOT_HEAD_INCLUDE
@@ -384,26 +374,19 @@ window.ceiSafeInsets = function () {
 	let t = s ? (parseFloat(s.paddingTop) || 0) : 0;
 	let r = s ? (parseFloat(s.paddingRight) || 0) : 0;
 	let b = s ? (parseFloat(s.paddingBottom) || 0) : 0;
-	const vv = window.visualViewport;
-	const physW = (vv && vv.width) || window.innerWidth || 1;
-	const physH = (vv && vv.height) || window.innerHeight || 1;
+	const shell = document.getElementById('cei-shell');
 	const portrait = document.body.classList.contains('cei-portrait');
+	const gameW = shell ? (shell.clientWidth || 1) : 1;
+	const gameH = shell ? (shell.clientHeight || 1) : 1;
 	if (portrait) {
-		/* rotate(90deg) translateY(-100%) : top physique → gauche jeu */
+		/* translate(pw) rotate(90deg) : top physique → gauche jeu */
 		const tmp = l;
 		l = b;
 		b = r;
 		r = t;
 		t = tmp;
 	}
-	return {
-		l: l,
-		t: t,
-		r: r,
-		b: b,
-		w: portrait ? physH : physW,
-		h: portrait ? physW : physH,
-	};
+	return { l: l, t: t, r: r, b: b, w: gameW, h: gameH };
 };
 
 (function () {
@@ -508,14 +491,6 @@ window.ceiSafeInsets = function () {
 		}
 	}
 
-	function isPortrait() {
-		if (window.matchMedia) {
-			if (window.matchMedia('(orientation: portrait)').matches) return true;
-			if (window.matchMedia('(orientation: landscape)').matches) return false;
-		}
-		return window.innerHeight > window.innerWidth;
-	}
-
 	function lockLandscape() {
 		const o = screen.orientation || screen.mozOrientation || screen.msOrientation;
 		if (o && typeof o.lock === 'function') {
@@ -527,38 +502,82 @@ window.ceiSafeInsets = function () {
 		}
 	}
 
-	function syncForcedLandscape() {
+	function viewportSize() {
+		const vv = window.visualViewport;
+		return {
+			w: Math.max(1, Math.round((vv && vv.width) || window.innerWidth || document.documentElement.clientWidth || 1)),
+			h: Math.max(1, Math.round((vv && vv.height) || window.innerHeight || document.documentElement.clientHeight || 1)),
+		};
+	}
+
+	function isPortrait() {
+		const s = viewportSize();
+		if (window.matchMedia) {
+			if (window.matchMedia('(orientation: portrait)').matches) return true;
+			if (window.matchMedia('(orientation: landscape)').matches) return false;
+		}
+		return s.h > s.w;
+	}
+
+	/** Remplit 100 % de l'écran : en portrait, shell paysage + rotation. */
+	function applyForcedLandscapeLayout() {
+		const shell = document.getElementById('cei-shell');
+		const canvas = document.getElementById('canvas');
+		const s = viewportSize();
 		const portrait = isPortrait();
 		document.documentElement.classList.toggle('cei-portrait', portrait);
 		document.body.classList.toggle('cei-portrait', portrait);
+		document.documentElement.style.width = s.w + 'px';
+		document.documentElement.style.height = s.h + 'px';
+		document.body.style.width = s.w + 'px';
+		document.body.style.height = s.h + 'px';
+		if (!shell) {
+			lockLandscape();
+			return;
+		}
+		shell.style.position = 'fixed';
+		shell.style.top = '0px';
+		shell.style.left = '0px';
+		shell.style.right = 'auto';
+		shell.style.bottom = 'auto';
+		shell.style.margin = '0';
+		shell.style.zIndex = '1';
+		if (portrait) {
+			/* Cadre logique paysage = (hauteur physique × largeur physique) */
+			shell.style.width = s.h + 'px';
+			shell.style.height = s.w + 'px';
+			/*
+			 * rotate(90deg) autour du coin haut-gauche place le cadre à gauche hors écran ;
+			 * translateX(+largeur physique) le ramène pile sur le viewport.
+			 */
+			shell.style.transformOrigin = 'top left';
+			shell.style.transform = 'translate(' + s.w + 'px, 0px) rotate(90deg)';
+		} else {
+			shell.style.width = s.w + 'px';
+			shell.style.height = s.h + 'px';
+			shell.style.transformOrigin = 'top left';
+			shell.style.transform = 'none';
+		}
+		if (canvas) {
+			canvas.style.width = '100%';
+			canvas.style.height = '100%';
+		}
 		lockLandscape();
 	}
 
 	function fitViewport() {
-		const h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-		const w = (window.visualViewport && window.visualViewport.width) || window.innerWidth;
-		document.documentElement.style.height = h + 'px';
-		document.body.style.height = h + 'px';
-		document.documentElement.style.width = w + 'px';
-		document.body.style.width = w + 'px';
-		syncForcedLandscape();
-		const shell = document.getElementById('cei-shell');
-		if (shell) {
-			if (document.body.classList.contains('cei-portrait')) {
-				shell.style.width = h + 'px';
-				shell.style.height = w + 'px';
-			} else {
-				shell.style.width = '';
-				shell.style.height = '';
-			}
-		}
+		applyForcedLandscapeLayout();
 		window.dispatchEvent(new Event('resize'));
 	}
 
-	syncForcedLandscape();
+	applyForcedLandscapeLayout();
 	fitViewport();
 	window.addEventListener('resize', fitViewport);
-	window.addEventListener('orientationchange', () => setTimeout(fitViewport, 120));
+	window.addEventListener('orientationchange', function () {
+		setTimeout(fitViewport, 50);
+		setTimeout(fitViewport, 200);
+		setTimeout(fitViewport, 500);
+	});
 	if (window.visualViewport) {
 		window.visualViewport.addEventListener('resize', fitViewport);
 		window.visualViewport.addEventListener('scroll', fitViewport);
