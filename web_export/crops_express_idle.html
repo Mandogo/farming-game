@@ -288,6 +288,17 @@ html, body {
 
 /* Paysage forcé en portrait : rotation CSS (iOS / navigateurs sans lock API) */
 #cei-shell {
+	position: relative;
+	width: 100%;
+	height: 100%;
+	overflow: hidden;
+	background: #1a1f1c;
+}
+
+#cei-shell #canvas,
+#cei-shell #status {
+	position: absolute;
+	inset: 0;
 	width: 100%;
 	height: 100%;
 }
@@ -295,16 +306,23 @@ html, body {
 html.cei-portrait,
 body.cei-portrait {
 	overflow: hidden;
+	background: #1a1f1c;
+	width: 100%;
+	height: 100%;
 }
 
+/* Tourne le jeu en paysage sans écran bloquant */
 body.cei-portrait #cei-shell {
 	position: fixed;
 	top: 0;
-	left: 100vw;
+	left: 0;
 	width: 100vh;
+	width: 100dvh;
 	height: 100vw;
-	transform: rotate(-90deg);
-	transform-origin: left top;
+	height: 100dvw;
+	transform: rotate(90deg) translateY(-100%);
+	transform-origin: top left;
+	z-index: 1;
 }
 		</style>
 		<link id="-gd-engine-icon" rel="icon" type="image/png" href="crops_express_idle.icon.png" />
@@ -357,7 +375,7 @@ body.cei-portrait #cei-shell {
 
 		<script src="crops_express_idle.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":10590416,"crops_express_idle.wasm":39513091},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":10594132,"crops_express_idle.wasm":39513091},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -374,11 +392,12 @@ window.ceiSafeInsets = function () {
 	const physH = (vv && vv.height) || window.innerHeight || 1;
 	const portrait = document.body.classList.contains('cei-portrait');
 	if (portrait) {
+		/* rotate(90deg) translateY(-100%) : top physique → gauche jeu */
 		const tmp = l;
-		l = t;
-		t = r;
-		r = b;
-		b = tmp;
+		l = b;
+		b = r;
+		r = t;
+		t = tmp;
 	}
 	return {
 		l: l,
@@ -465,6 +484,16 @@ window.ceiSafeInsets = function () {
 		document.documentElement.style.width = w + 'px';
 		document.body.style.width = w + 'px';
 		syncForcedLandscape();
+		const shell = document.getElementById('cei-shell');
+		if (shell) {
+			if (document.body.classList.contains('cei-portrait')) {
+				shell.style.width = h + 'px';
+				shell.style.height = w + 'px';
+			} else {
+				shell.style.width = '';
+				shell.style.height = '';
+			}
+		}
 		window.dispatchEvent(new Event('resize'));
 	}
 

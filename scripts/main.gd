@@ -112,7 +112,9 @@ var _skill_tree_tuto_active: bool = false
 var _skill_tip: PanelContainer = null
 var _skill_tip_skill_id: String = ""
 var _skill_tip_anchor: Control = null
+var _skill_tip_pinned: bool = false
 var _skill_nodes: Array[Control] = []
+var _skill_selected_id: String = ""
 ## Tooltip survol uniquement (pas d'?pinglage).
 var _combo_status_l: Label = null
 var _combo_reward_l: Label = null
@@ -1822,7 +1824,9 @@ func _setup_skill_tree_modal() -> void:
 
 
 func _close_skill_tree() -> void:
-	_hide_skill_tip()
+	_skill_selected_id = ""
+	_skill_tip_pinned = false
+	_hide_skill_tip(true)
 	if skill_tree_overlay:
 		skill_tree_overlay.visible = false
 
@@ -1844,16 +1848,16 @@ func _make_parchment_style() -> StyleBoxFlat:
 
 func _make_skill_tree_panel_style() -> StyleBoxFlat:
 	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.88, 0.82, 0.70, 0.98)
-	st.border_color = Color(0.52, 0.42, 0.28, 0.85)
+	st.bg_color = Color(0.93, 0.90, 0.82, 0.98)
+	st.border_color = Color(0.48, 0.58, 0.42, 0.80)
 	st.set_border_width_all(2)
-	st.set_corner_radius_all(18)
-	st.content_margin_left = 6
-	st.content_margin_right = 6
-	st.content_margin_top = 6
-	st.content_margin_bottom = 6
-	st.shadow_color = Color(0.25, 0.18, 0.10, 0.35)
-	st.shadow_size = 16
+	st.set_corner_radius_all(16)
+	st.content_margin_left = 8
+	st.content_margin_right = 8
+	st.content_margin_top = 8
+	st.content_margin_bottom = 8
+	st.shadow_color = Color(0.18, 0.22, 0.14, 0.30)
+	st.shadow_size = 14
 	return st
 
 
@@ -1950,6 +1954,8 @@ func _make_skill_pc_badge() -> PanelContainer:
 func _open_skill_tree() -> void:
 	if skill_tree_overlay == null:
 		return
+	_skill_selected_id = ""
+	_skill_tip_pinned = false
 	if _skill_tree_tuto_active or _tutorial_mode == &"skill_tree":
 		_skill_tree_tuto_active = false
 		_tutorial_mode = &""
@@ -5259,12 +5265,14 @@ func _scroll_boost_info_to_current(scroll: ScrollContainer, list: VBoxContainer,
 
 
 func _fill_skills() -> void:
-	## Arbre compact : tout visible, sans scroll.
+	## Arbre compact : 5 axes autour du hub, sans scroll.
 	var host: VBoxContainer = skill_tree_vbox
 	if host == null:
 		return
 	_skill_nodes.clear()
-	_hide_skill_tip()
+	_skill_selected_id = ""
+	_skill_tip_pinned = false
+	_hide_skill_tip(true)
 	if _skill_tip != null and is_instance_valid(_skill_tip):
 		_skill_tip.queue_free()
 		_skill_tip = null
@@ -5273,9 +5281,9 @@ func _fill_skills() -> void:
 	header.add_theme_constant_override("separation", 8)
 	host.add_child(header)
 	var title := Label.new()
-	title.text = "Arbre de competences"
-	title.add_theme_font_size_override("font_size", 16)
-	title.add_theme_color_override("font_color", Color(0.28, 0.22, 0.14))
+	title.text = "Arbre de compétences"
+	title.add_theme_font_size_override("font_size", 17)
+	title.add_theme_color_override("font_color", Color(0.22, 0.32, 0.20))
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	header.add_child(title)
 	header.add_child(_make_skill_pc_badge())
@@ -5285,14 +5293,14 @@ func _fill_skills() -> void:
 	stage.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	stage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var stage_st := StyleBoxFlat.new()
-	stage_st.bg_color = Color(0.78, 0.70, 0.55, 0.55)
-	stage_st.border_color = Color(0.55, 0.45, 0.32, 0.65)
+	stage_st.bg_color = Color(0.86, 0.90, 0.80, 0.72)
+	stage_st.border_color = Color(0.55, 0.65, 0.48, 0.55)
 	stage_st.set_border_width_all(1)
-	stage_st.set_corner_radius_all(14)
-	stage_st.content_margin_left = 6
-	stage_st.content_margin_right = 6
-	stage_st.content_margin_top = 6
-	stage_st.content_margin_bottom = 6
+	stage_st.set_corner_radius_all(12)
+	stage_st.content_margin_left = 4
+	stage_st.content_margin_right = 4
+	stage_st.content_margin_top = 4
+	stage_st.content_margin_bottom = 4
 	stage.add_theme_stylebox_override("panel", stage_st)
 	host.add_child(stage)
 
@@ -5313,96 +5321,172 @@ func _ensure_skill_tip() -> PanelContainer:
 	var tip := PanelContainer.new()
 	tip.name = "SkillTip"
 	tip.visible = false
-	tip.z_index = 80
-	tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tip.z_index = 90
+	tip.mouse_filter = Control.MOUSE_FILTER_STOP
 	tip.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.08, 0.11, 0.10, 0.96)
-	st.border_color = Color(0.55, 0.72, 0.48, 0.85)
-	st.set_border_width_all(1)
-	st.set_corner_radius_all(8)
-	st.content_margin_left = 9
-	st.content_margin_right = 9
-	st.content_margin_top = 6
-	st.content_margin_bottom = 6
-	st.shadow_color = Color(0, 0, 0, 0.4)
-	st.shadow_size = 6
+	st.bg_color = Color(0.98, 0.97, 0.92, 0.98)
+	st.border_color = Color(0.42, 0.58, 0.38, 0.90)
+	st.set_border_width_all(2)
+	st.set_corner_radius_all(12)
+	st.content_margin_left = 12
+	st.content_margin_right = 12
+	st.content_margin_top = 10
+	st.content_margin_bottom = 10
+	st.shadow_color = Color(0, 0, 0, 0.28)
+	st.shadow_size = 8
 	tip.add_theme_stylebox_override("panel", st)
 	var v := VBoxContainer.new()
 	v.name = "TipBox"
-	v.add_theme_constant_override("separation", 2)
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_theme_constant_override("separation", 6)
 	v.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	tip.add_child(v)
 	var title := Label.new()
 	title.name = "TipTitle"
-	title.add_theme_font_size_override("font_size", 12)
-	title.add_theme_color_override("font_color", Color(0.94, 0.96, 0.90, 1))
-	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	title.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	title.add_theme_font_size_override("font_size", 14)
+	title.add_theme_color_override("font_color", Color(0.18, 0.26, 0.16, 1))
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title.custom_minimum_size = Vector2(220, 0)
 	v.add_child(title)
+	var meta := Label.new()
+	meta.name = "TipMeta"
+	meta.add_theme_font_size_override("font_size", 11)
+	meta.add_theme_color_override("font_color", Color(0.38, 0.48, 0.34, 1))
+	meta.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	meta.custom_minimum_size = Vector2(220, 0)
+	v.add_child(meta)
 	var body := Label.new()
 	body.name = "TipBody"
 	body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	body.custom_minimum_size = Vector2(200, 0)
-	body.add_theme_font_size_override("font_size", 11)
-	body.add_theme_color_override("font_color", Color(0.78, 0.84, 0.78, 1))
-	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	body.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	body.custom_minimum_size = Vector2(220, 0)
+	body.add_theme_font_size_override("font_size", 12)
+	body.add_theme_color_override("font_color", Color(0.30, 0.34, 0.28, 1))
 	v.add_child(body)
+	var buy := Button.new()
+	buy.name = "TipBuy"
+	buy.focus_mode = Control.FOCUS_NONE
+	buy.custom_minimum_size = Vector2(0, 36)
+	buy.add_theme_font_size_override("font_size", 13)
+	buy.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	v.add_child(buy)
+	buy.pressed.connect(_on_skill_tip_buy_pressed)
 	if skill_tree_overlay:
 		skill_tree_overlay.add_child(tip)
 	_skill_tip = tip
 	return tip
 
 
-func _show_skill_tip(skill_id: String, anchor: Control) -> void:
+func _on_skill_tip_buy_pressed() -> void:
+	if _skill_tip_skill_id.is_empty():
+		return
+	var sid := _skill_tip_skill_id
+	if GameState.buy_skill(sid):
+		_skill_selected_id = sid
+		_rebuild_skill_modal()
+		_refresh_player_hud()
+		## Rouvre le tip sur le même nœud après rebuild.
+		call_deferred("_reopen_skill_tip_after_buy", sid)
+
+
+func _reopen_skill_tip_after_buy(skill_id: String) -> void:
+	for n in _skill_nodes:
+		if not is_instance_valid(n):
+			continue
+		if str(n.get_meta("skill_id", "")) == skill_id:
+			_skill_selected_id = skill_id
+			_skill_tip_pinned = true
+			_show_skill_tip(skill_id, n, true)
+			return
+
+
+func _show_skill_tip(skill_id: String, anchor: Control, pinned: bool = false) -> void:
 	if not is_instance_valid(anchor):
 		return
 	var tip := _ensure_skill_tip()
 	var def: Dictionary = GameState.get_skill_def(skill_id)
 	if def.is_empty():
-		_hide_skill_tip()
+		_hide_skill_tip(true)
 		return
 	var owned_lv := GameState.get_skill_level(skill_id)
 	var max_lv := GameState.skill_max_level(skill_id)
-	var owned := owned_lv >= 1
 	var branch_ok := GameState.is_skill_branch_unlocked(skill_id)
 	var prestige_ok := GameState.is_skill_prestige_met(skill_id)
 	var cost: int = GameState.skill_cost_for_next(skill_id)
+	var can_buy := (not GameState.is_skill_maxed(skill_id)) and branch_ok and prestige_ok and GameState.skill_points >= cost
 	var title_l := tip.get_node_or_null("TipBox/TipTitle") as Label
+	var meta_l := tip.get_node_or_null("TipBox/TipMeta") as Label
 	var body := tip.get_node_or_null("TipBox/TipBody") as Label
+	var buy := tip.get_node_or_null("TipBox/TipBuy") as Button
 	var branch := str(def.get("branch", "trunk"))
 	var col := _skill_branch_color(branch)
 	var name := str(def.get("title", skill_id))
 	if title_l:
-		if owned:
-			if GameState.is_skill_maxed(skill_id):
-				title_l.text = "%s — MAX (%d/%d)" % [name, owned_lv, max_lv]
-			else:
-				title_l.text = "%s — niv. %d/%d (%d PC)" % [name, owned_lv, max_lv, cost]
+		title_l.text = name
+	if meta_l:
+		var parts: PackedStringArray = []
+		parts.append(GameState.skill_branch_label(branch))
+		parts.append("Niv. %d / %d" % [owned_lv, max_lv])
+		if not GameState.is_skill_maxed(skill_id):
+			parts.append("Prochain : %d PC" % cost)
 		else:
-			title_l.text = "%s (%d PC)" % [name, cost]
+			parts.append("MAX")
+		meta_l.text = " · ".join(parts)
 	if body:
 		var detail := str(def.get("desc", ""))
-		detail = "%s\nBranche : %s" % [detail, GameState.skill_branch_label(branch)]
 		if not prestige_ok:
-			detail += "\nRequiert prestige P%d." % GameState.skill_prestige_required(skill_id)
+			detail += "\n\nVerrouillé — prestige P%d requis." % GameState.skill_prestige_required(skill_id)
 		elif not branch_ok:
 			var reqs: Array = GameState.skill_prerequisites(skill_id)
 			var names: PackedStringArray = []
 			for p in reqs:
 				names.append(str(GameState.get_skill_def(str(p)).get("title", p)))
 			if not names.is_empty():
-				detail += "\nPrerequis : %s" % " / ".join(names)
+				detail += "\n\nDébloque d'abord : %s" % " / ".join(names)
 		body.text = detail
+	if buy:
+		if GameState.is_skill_maxed(skill_id):
+			buy.text = "Niveau max atteint"
+			buy.disabled = true
+		elif not prestige_ok:
+			buy.text = "Requiert P%d" % GameState.skill_prestige_required(skill_id)
+			buy.disabled = true
+		elif not branch_ok:
+			buy.text = "Branche verrouillée"
+			buy.disabled = true
+		elif GameState.skill_points < cost:
+			buy.text = "Pas assez de PC (%d)" % cost
+			buy.disabled = true
+		elif owned_lv <= 0:
+			buy.text = "Débloquer — %d PC" % cost
+			buy.disabled = not can_buy
+		else:
+			buy.text = "Améliorer — %d PC" % cost
+			buy.disabled = not can_buy
+		## Style bouton
+		var btn_bg := Color(0.34, 0.58, 0.32, 1.0) if not buy.disabled else Color(0.55, 0.55, 0.52, 1.0)
+		for state_name in ["normal", "hover", "pressed", "disabled"]:
+			var bst := StyleBoxFlat.new()
+			bst.bg_color = btn_bg if state_name != "hover" else btn_bg.lightened(0.12)
+			if state_name == "pressed":
+				bst.bg_color = btn_bg.darkened(0.08)
+			if state_name == "disabled":
+				bst.bg_color = Color(0.62, 0.62, 0.58, 1.0)
+			bst.set_corner_radius_all(8)
+			bst.content_margin_left = 10
+			bst.content_margin_right = 10
+			bst.content_margin_top = 6
+			bst.content_margin_bottom = 6
+			buy.add_theme_stylebox_override(state_name, bst)
+		buy.add_theme_color_override("font_color", Color.WHITE)
+		buy.add_theme_color_override("font_disabled_color", Color(0.88, 0.88, 0.86))
 	var tip_st := tip.get_theme_stylebox("panel")
 	if tip_st is StyleBoxFlat:
 		var st2: StyleBoxFlat = (tip_st as StyleBoxFlat).duplicate()
-		st2.border_color = Color(col.r, col.g, col.b, 0.9)
+		st2.border_color = Color(col.r, col.g, col.b, 0.95)
 		tip.add_theme_stylebox_override("panel", st2)
 	_skill_tip_skill_id = skill_id
 	_skill_tip_anchor = anchor
+	_skill_tip_pinned = pinned or _skill_selected_id == skill_id
 	tip.visible = true
 	_position_skill_tip(anchor)
 	call_deferred("_fit_skill_tip")
@@ -5413,15 +5497,14 @@ func _fit_skill_tip() -> void:
 		return
 	_skill_tip.reset_size()
 	var ms := _skill_tip.get_combined_minimum_size()
-	_skill_tip.size = Vector2(maxi(180, int(ms.x)), int(ms.y))
+	_skill_tip.size = Vector2(maxi(230, int(ms.x)), int(ms.y))
 	_clamp_skill_tip()
 
 
 func _position_skill_tip(anchor: Control) -> void:
 	if _skill_tip == null or not is_instance_valid(_skill_tip) or not is_instance_valid(anchor):
 		return
-	## Place le tip ? droite du n?ud, sans bloquer la souris.
-	var tip_pos := anchor.get_global_rect().position + Vector2(anchor.size.x + 12, -4)
+	var tip_pos := anchor.get_global_rect().position + Vector2(anchor.size.x + 10, -8)
 	if skill_tree_overlay:
 		tip_pos -= skill_tree_overlay.global_position
 	_skill_tip.position = tip_pos
@@ -5433,21 +5516,23 @@ func _clamp_skill_tip() -> void:
 		return
 	var max_x := (skill_tree_overlay.size.x if skill_tree_overlay else 1280.0) - _skill_tip.size.x - 10.0
 	var max_y := (skill_tree_overlay.size.y if skill_tree_overlay else 720.0) - _skill_tip.size.y - 10.0
-	## Si trop ? droite, bascule ? gauche du n?ud
 	if _skill_tip_anchor != null and is_instance_valid(_skill_tip_anchor) and _skill_tip.position.x > max_x:
 		var left := _skill_tip_anchor.get_global_rect().position
 		if skill_tree_overlay:
 			left -= skill_tree_overlay.global_position
-		_skill_tip.position.x = left.x - _skill_tip.size.x - 12.0
+		_skill_tip.position.x = left.x - _skill_tip.size.x - 10.0
 	_skill_tip.position = Vector2(
 		clampf(_skill_tip.position.x, 10.0, maxf(10.0, max_x)),
 		clampf(_skill_tip.position.y, 10.0, maxf(10.0, max_y))
 	)
 
 
-func _hide_skill_tip(_force: bool = false) -> void:
+func _hide_skill_tip(force: bool = false) -> void:
+	if not force and _skill_tip_pinned:
+		return
 	_skill_tip_skill_id = ""
 	_skill_tip_anchor = null
+	_skill_tip_pinned = false
 	if _skill_tip and is_instance_valid(_skill_tip):
 		_skill_tip.visible = false
 
@@ -5458,39 +5543,45 @@ func _build_skill_mindmap() -> Control:
 	map.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	map.clip_contents = true
 
+	## 5 axes rapprochés autour du hub — positions normalisées.
 	var layout := {
-		"root_hub": Vector2(0.50, 0.50),
-		"combo_flash": Vector2(0.50, 0.26),
-		"combo_frenzy_power": Vector2(0.50, 0.10),
-		"combo_frenzy_window": Vector2(0.28, 0.18),
-		"combo_frenzy_duration": Vector2(0.72, 0.18),
-		"combo_cd": Vector2(0.22, 0.34),
-		"combo_chain": Vector2(0.78, 0.34),
-		"order_time": Vector2(0.22, 0.50),
-		"order_flow": Vector2(0.08, 0.62),
-		"order_slots": Vector2(0.14, 0.74),
-		"order_refuse": Vector2(0.22, 0.86),
-		"xp_mission": Vector2(0.78, 0.50),
-		"xp_curve": Vector2(0.92, 0.62),
-		"xp_mission_2": Vector2(0.86, 0.74),
-		"xp_prestige_prep": Vector2(0.92, 0.86),
-		"money_mission": Vector2(0.50, 0.72),
-		"money_shop": Vector2(0.38, 0.86),
-		"money_start": Vector2(0.50, 0.92),
-		"money_crit": Vector2(0.62, 0.86),
-		"atelier_gears": Vector2(0.36, 0.64),
-		"atelier_long_arms": Vector2(0.14, 0.92),
-		"atelier_wide_tour": Vector2(0.30, 0.96),
-		"atelier_live_chain": Vector2(0.42, 0.92),
-		"atelier_network": Vector2(0.48, 0.82),
+		"root_hub": Vector2(0.50, 0.48),
+		## Haut — Combo
+		"combo_flash": Vector2(0.50, 0.30),
+		"combo_frenzy_power": Vector2(0.50, 0.12),
+		"combo_frenzy_window": Vector2(0.34, 0.18),
+		"combo_frenzy_duration": Vector2(0.66, 0.18),
+		"combo_cd": Vector2(0.34, 0.32),
+		"combo_chain": Vector2(0.66, 0.32),
+		## Gauche — Commandes
+		"order_time": Vector2(0.28, 0.48),
+		"order_flow": Vector2(0.12, 0.38),
+		"order_slots": Vector2(0.10, 0.52),
+		"order_refuse": Vector2(0.14, 0.66),
+		## Droite — XP
+		"xp_mission": Vector2(0.72, 0.48),
+		"xp_curve": Vector2(0.88, 0.38),
+		"xp_mission_2": Vector2(0.90, 0.52),
+		"xp_prestige_prep": Vector2(0.86, 0.66),
+		## Bas — Or
+		"money_mission": Vector2(0.58, 0.68),
+		"money_shop": Vector2(0.48, 0.84),
+		"money_start": Vector2(0.58, 0.90),
+		"money_crit": Vector2(0.68, 0.84),
+		## Bas-gauche — Atelier
+		"atelier_gears": Vector2(0.38, 0.66),
+		"atelier_long_arms": Vector2(0.24, 0.82),
+		"atelier_wide_tour": Vector2(0.34, 0.90),
+		"atelier_live_chain": Vector2(0.44, 0.84),
+		"atelier_network": Vector2(0.46, 0.74),
 	}
 
 	var branch_zones := {
-		"combo": {"center": Vector2(0.50, 0.20), "size": Vector2(0.56, 0.28), "label": "Rythme & Burst"},
-		"orders": {"center": Vector2(0.16, 0.66), "size": Vector2(0.28, 0.38), "label": "Logisticien"},
-		"xp": {"center": Vector2(0.84, 0.66), "size": Vector2(0.28, 0.38), "label": "Course au Prestige"},
-		"money": {"center": Vector2(0.50, 0.84), "size": Vector2(0.36, 0.22), "label": "Marchand"},
-		"atelier": {"center": Vector2(0.30, 0.82), "size": Vector2(0.34, 0.24), "label": "Machines"},
+		"combo": {"center": Vector2(0.50, 0.20), "size": Vector2(0.42, 0.28), "label": "Rythme & Burst"},
+		"orders": {"center": Vector2(0.16, 0.52), "size": Vector2(0.26, 0.38), "label": "Logisticien"},
+		"xp": {"center": Vector2(0.84, 0.52), "size": Vector2(0.26, 0.38), "label": "Course Prestige"},
+		"money": {"center": Vector2(0.58, 0.82), "size": Vector2(0.30, 0.24), "label": "Marchand"},
+		"atelier": {"center": Vector2(0.34, 0.80), "size": Vector2(0.30, 0.26), "label": "Machines"},
 	}
 
 	var backdrop := Control.new()
@@ -5508,8 +5599,8 @@ func _build_skill_mindmap() -> Control:
 	var nodes: Dictionary = {}
 	var sizes: Dictionary = {}
 	var centers: Dictionary = {}
-	const NODE_SZ := Vector2(44, 44)
-	const HUB_SZ := Vector2(58, 58)
+	const NODE_SZ := Vector2(48, 48)
+	const HUB_SZ := Vector2(62, 62)
 
 	for skill_id in GameState.skill_ids():
 		var def: Dictionary = GameState.get_skill_def(skill_id)
@@ -5524,50 +5615,52 @@ func _build_skill_mindmap() -> Control:
 		var node := _mindmap_node(skill_id, def, owned_lv, max_lv, branch_ok, prestige_ok, can, cost, node_size)
 		map.add_child(node)
 		nodes[skill_id] = node
-		sizes[skill_id] = node_size
+		## Taille visuelle inclut le badge coût sous le nœud.
+		sizes[skill_id] = Vector2(node_size.x, node_size.y + 16)
 		_skill_nodes.append(node)
 		node.set_meta("skill_id", skill_id)
 		node.set_meta("rel", layout.get(skill_id, Vector2(0.5, 0.5)))
+		node.set_meta("core_size", node_size)
 
 	var place := func():
 		var w := maxf(map.size.x, 320.0)
 		var h := maxf(map.size.y, 320.0)
 		for c in backdrop.get_children():
 			c.queue_free()
+		## Zones teintées douces (séparation des 5 axes)
 		for bkey in branch_zones:
 			var z: Dictionary = branch_zones[bkey]
 			var bc := _skill_branch_color(str(bkey))
-			var zone := ColorRect.new()
+			var panel := Panel.new()
 			var cs: Vector2 = z["center"]
 			var zs: Vector2 = z["size"]
-			zone.color = Color(bc.r, bc.g, bc.b, 0.10)
-			zone.position = Vector2((cs.x - zs.x * 0.5) * w, (cs.y - zs.y * 0.5) * h)
-			zone.size = Vector2(zs.x * w, zs.y * h)
-			zone.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			backdrop.add_child(zone)
+			panel.position = Vector2((cs.x - zs.x * 0.5) * w, (cs.y - zs.y * 0.5) * h)
+			panel.size = Vector2(zs.x * w, zs.y * h)
+			panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			var zst := StyleBoxFlat.new()
+			zst.bg_color = Color(bc.r, bc.g, bc.b, 0.09)
+			zst.border_color = Color(bc.r, bc.g, bc.b, 0.28)
+			zst.set_border_width_all(1)
+			zst.set_corner_radius_all(14)
+			panel.add_theme_stylebox_override("panel", zst)
+			backdrop.add_child(panel)
 			var lbl := Label.new()
 			lbl.text = str(z["label"])
-			lbl.add_theme_font_size_override("font_size", 10)
-			lbl.add_theme_color_override("font_color", Color(bc.r * 0.55, bc.g * 0.55, bc.b * 0.55, 0.95))
-			lbl.position = zone.position + Vector2(6, 4)
+			lbl.add_theme_font_size_override("font_size", 11)
+			lbl.add_theme_color_override("font_color", Color(bc.r * 0.55 + 0.1, bc.g * 0.55 + 0.1, bc.b * 0.55 + 0.08, 0.95))
+			lbl.position = panel.position + Vector2(8, 4)
 			lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			backdrop.add_child(lbl)
-		var trunk := ColorRect.new()
-		trunk.color = Color(0.45, 0.32, 0.18, 0.35)
-		var hub_pos := Vector2(0.50, 0.50)
-		trunk.size = Vector2(10, h * 0.42)
-		trunk.position = Vector2(hub_pos.x * w - trunk.size.x * 0.5, hub_pos.y * h - trunk.size.y * 0.5)
-		trunk.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		backdrop.add_child(trunk)
 		for sid in nodes:
 			var n: Control = nodes[sid]
 			var rel: Vector2 = n.get_meta("rel")
 			var ns: Vector2 = sizes[sid]
-			var pos := Vector2(rel.x * w - ns.x * 0.5, rel.y * h - ns.y * 0.5)
-			pos.x = clampf(pos.x, 4.0, w - ns.x - 4.0)
-			pos.y = clampf(pos.y, 4.0, h - ns.y - 4.0)
+			var core: Vector2 = n.get_meta("core_size")
+			var pos := Vector2(rel.x * w - core.x * 0.5, rel.y * h - core.y * 0.5)
+			pos.x = clampf(pos.x, 2.0, w - ns.x - 2.0)
+			pos.y = clampf(pos.y, 2.0, h - ns.y - 2.0)
 			n.position = pos
-			centers[sid] = pos + ns * 0.5
+			centers[sid] = pos + core * 0.5
 		for c in link_host.get_children():
 			c.queue_free()
 		for sid in GameState.skill_ids():
@@ -5580,24 +5673,22 @@ func _build_skill_mindmap() -> Control:
 					continue
 				var parent_lv := GameState.get_skill_level(pid)
 				var child_lv := GameState.get_skill_level(sid)
+				var child_unlocked := GameState.is_skill_branch_unlocked(sid) and GameState.is_skill_prestige_met(sid)
 				var branch := str(GameState.get_skill_def(sid).get("branch", "trunk"))
 				var col := _skill_branch_color(branch)
 				var a: Vector2 = centers[pid]
 				var b: Vector2 = centers[sid]
-				var mid := (a + b) * 0.5 + Vector2(0, (b.y - a.y) * 0.12)
+				var mid := (a + b) * 0.5
 				var pts := PackedVector2Array([a, mid, b])
 				if parent_lv >= 1:
-					var glow := Line2D.new()
-					glow.width = 6.0
-					glow.default_color = Color(col.r, col.g, col.b, 0.12 if child_lv >= 1 else 0.07)
-					glow.antialiased = true
-					glow.begin_cap_mode = Line2D.LINE_CAP_ROUND
-					glow.end_cap_mode = Line2D.LINE_CAP_ROUND
-					glow.points = pts
-					link_host.add_child(glow)
 					var line := Line2D.new()
-					line.width = 2.4 if child_lv >= 1 else 1.8
-					line.default_color = Color(col.r, col.g, col.b, 0.92 if child_lv >= 1 else 0.45)
+					line.width = 3.0 if child_lv >= 1 else (2.4 if child_unlocked else 2.0)
+					if child_lv >= 1:
+						line.default_color = Color(col.r, col.g, col.b, 0.95)
+					elif child_unlocked:
+						line.default_color = Color(col.r, col.g, col.b, 0.55)
+					else:
+						line.default_color = Color(col.r, col.g, col.b, 0.28)
 					line.antialiased = true
 					line.begin_cap_mode = Line2D.LINE_CAP_ROUND
 					line.end_cap_mode = Line2D.LINE_CAP_ROUND
@@ -5605,8 +5696,8 @@ func _build_skill_mindmap() -> Control:
 					link_host.add_child(line)
 				else:
 					var empty := Line2D.new()
-					empty.width = 1.2
-					empty.default_color = Color(0.45, 0.38, 0.30, 0.25)
+					empty.width = 1.5
+					empty.default_color = Color(0.50, 0.52, 0.46, 0.22)
 					empty.antialiased = true
 					empty.points = pts
 					link_host.add_child(empty)
@@ -5619,17 +5710,17 @@ func _build_skill_mindmap() -> Control:
 func _skill_branch_color(branch: String) -> Color:
 	match branch:
 		"combo":
-			return Color(0.95, 0.52, 0.22, 1.0)
+			return Color(0.92, 0.48, 0.20, 1.0)
 		"xp":
-			return Color(0.38, 0.64, 0.98, 1.0)
+			return Color(0.32, 0.58, 0.92, 1.0)
 		"orders":
-			return Color(0.28, 0.72, 0.66, 1.0)
+			return Color(0.18, 0.68, 0.62, 1.0)
 		"money":
-			return Color(0.88, 0.72, 0.22, 1.0)
+			return Color(0.86, 0.68, 0.16, 1.0)
 		"atelier":
-			return Color(0.62, 0.55, 0.72, 1.0)
+			return Color(0.58, 0.48, 0.72, 1.0)
 		_:
-			return Color(0.55, 0.78, 0.48, 1.0)
+			return Color(0.42, 0.68, 0.38, 1.0)
 
 
 func _mindmap_place_once(map: Control, place: Callable) -> void:
@@ -5655,38 +5746,62 @@ func _mindmap_node(
 	var maxed := owned_lv >= max_lv
 	var radius := int(mini(node_size.x, node_size.y) * 0.5)
 	var unlocked := branch_ok and prestige_ok
+	var selected := _skill_selected_id == skill_id
 
+	## Racine = nœud + label coût dessous
 	var root := Control.new()
-	root.custom_minimum_size = node_size
-	root.size = node_size
+	root.custom_minimum_size = Vector2(node_size.x, node_size.y + 16)
+	root.size = root.custom_minimum_size
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
-	root.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND if (can or unlocked or owned) else Control.CURSOR_ARROW
+	root.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	root.pivot_offset = node_size * 0.5
 
+	var ring_host := Control.new()
+	ring_host.position = Vector2(-4, -4)
+	ring_host.size = node_size + Vector2(8, 8)
+	ring_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(ring_host)
+	var ring_script = load("res://scripts/ui/skill_level_ring.gd")
+	if ring_script:
+		var ring = ring_script.new()
+		ring.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		ring.ratio = float(owned_lv) / float(maxi(1, max_lv))
+		ring.fill_color = branch_col if owned else Color(branch_col.r, branch_col.g, branch_col.b, 0.35)
+		ring.track_color = Color(0.40, 0.42, 0.38, 0.35)
+		ring.line_w = 3.2 if is_hub else 2.8
+		ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ring_host.add_child(ring)
+
 	var card := PanelContainer.new()
-	card.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	card.position = Vector2.ZERO
+	card.size = node_size
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var st := StyleBoxFlat.new()
 	if maxed:
-		st.bg_color = Color(branch_col.r * 0.35 + 0.12, branch_col.g * 0.35 + 0.14, branch_col.b * 0.35 + 0.10, 0.98)
-		st.border_color = branch_col.darkened(0.1)
+		st.bg_color = Color(branch_col.r * 0.40 + 0.18, branch_col.g * 0.40 + 0.20, branch_col.b * 0.40 + 0.16, 1.0)
+		st.border_color = branch_col
 		st.set_border_width_all(3 if is_hub else 2)
 	elif owned:
-		st.bg_color = Color(branch_col.r * 0.28 + 0.14, branch_col.g * 0.28 + 0.16, branch_col.b * 0.28 + 0.12, 0.98)
+		st.bg_color = Color(0.98, 0.97, 0.92, 1.0)
 		st.border_color = branch_col
 		st.set_border_width_all(2)
 	elif can:
-		st.bg_color = Color(0.94, 0.90, 0.78, 0.98)
-		st.border_color = Color(0.85, 0.62, 0.18, 1.0)
+		st.bg_color = Color(1.0, 0.98, 0.88, 1.0)
+		st.border_color = Color(0.92, 0.68, 0.18, 1.0)
 		st.set_border_width_all(2)
 	elif unlocked:
-		st.bg_color = Color(0.90, 0.86, 0.76, 0.96)
-		st.border_color = Color(branch_col.r, branch_col.g, branch_col.b, 0.55)
+		st.bg_color = Color(0.96, 0.95, 0.90, 1.0)
+		st.border_color = Color(branch_col.r, branch_col.g, branch_col.b, 0.70)
 		st.set_border_width_all(2)
 	else:
-		st.bg_color = Color(0.72, 0.68, 0.62, 0.88)
-		st.border_color = Color(0.50, 0.46, 0.40, 0.55)
+		st.bg_color = Color(0.88, 0.88, 0.84, 0.95)
+		st.border_color = Color(0.55, 0.55, 0.50, 0.55)
 		st.set_border_width_all(1)
+	if selected:
+		st.set_border_width_all(3)
+		st.border_color = Color(0.18, 0.45, 0.85, 1.0)
+		st.shadow_color = Color(0.18, 0.45, 0.85, 0.35)
+		st.shadow_size = 6
 	st.set_corner_radius_all(radius)
 	card.add_theme_stylebox_override("panel", st)
 	root.add_child(card)
@@ -5696,90 +5811,90 @@ func _mindmap_node(
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	card.add_child(center)
 
-	var content := VBoxContainer.new()
-	content.alignment = BoxContainer.ALIGNMENT_CENTER
-	content.add_theme_constant_override("separation", 0)
-	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	center.add_child(content)
+	## Toujours afficher l'icône (même verrouillé)
+	var icon_key := str(def.get("icon", "ui_xp"))
+	if _textures.has(icon_key):
+		var ic := TextureRect.new()
+		var isz := 28 if is_hub else 22
+		ic.custom_minimum_size = Vector2(isz, isz)
+		ic.texture = _textures[icon_key]
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		if owned or maxed:
+			ic.modulate = Color.WHITE
+		elif can:
+			ic.modulate = Color(1.0, 0.98, 0.90)
+		elif unlocked:
+			ic.modulate = Color(0.92, 0.90, 0.86)
+		else:
+			ic.modulate = Color(0.55, 0.55, 0.52, 0.85)
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		center.add_child(ic)
+	else:
+		var fallback := Label.new()
+		fallback.text = "?"
+		fallback.add_theme_font_size_override("font_size", 14)
+		fallback.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		center.add_child(fallback)
 
+	## Pastille prestige si bloqué
 	if not prestige_ok:
-		var lock := Label.new()
-		lock.text = "P%d" % GameState.skill_prestige_required(skill_id)
-		lock.add_theme_font_size_override("font_size", 8)
-		lock.add_theme_color_override("font_color", Color(0.45, 0.38, 0.32))
-		lock.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		lock.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		content.add_child(lock)
-	elif not unlocked and not owned:
-		var lock := Label.new()
-		lock.text = "?"
-		lock.add_theme_font_size_override("font_size", 15)
-		lock.add_theme_color_override("font_color", Color(0.50, 0.46, 0.42))
-		lock.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		lock.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		content.add_child(lock)
-	else:
-		var icon_key := str(def.get("icon", "ui_xp"))
-		if _textures.has(icon_key):
-			var ic := TextureRect.new()
-			var isz := 26 if is_hub else 22
-			ic.custom_minimum_size = Vector2(isz, isz)
-			ic.texture = _textures[icon_key]
-			ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-			ic.modulate = Color.WHITE if owned else (Color(0.95, 0.92, 0.88) if unlocked else Color(0.55, 0.52, 0.48))
-			ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			content.add_child(ic)
+		var pbadge := Label.new()
+		pbadge.text = "P%d" % GameState.skill_prestige_required(skill_id)
+		pbadge.add_theme_font_size_override("font_size", 8)
+		pbadge.add_theme_color_override("font_color", Color(0.55, 0.25, 0.20))
+		pbadge.position = Vector2(node_size.x - 18, -2)
+		pbadge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		root.add_child(pbadge)
 
-	var badge := Label.new()
-	badge.anchor_left = 0.5
-	badge.anchor_right = 0.5
-	badge.anchor_top = 1.0
-	badge.anchor_bottom = 1.0
-	badge.offset_left = -20
-	badge.offset_right = 20
-	badge.offset_top = -2
-	badge.offset_bottom = 12
-	badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	badge.add_theme_font_size_override("font_size", 8)
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	## Prix PC sous le nœud
+	var cost_l := Label.new()
+	cost_l.position = Vector2(0, node_size.y + 1)
+	cost_l.size = Vector2(node_size.x, 14)
+	cost_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cost_l.add_theme_font_size_override("font_size", 9)
+	cost_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if maxed:
-		badge.text = "MAX"
-		badge.add_theme_color_override("font_color", branch_col.darkened(0.15))
-	elif owned:
-		badge.text = "%d/%d" % [owned_lv, max_lv]
-		badge.add_theme_color_override("font_color", branch_col.darkened(0.05))
+		cost_l.text = "MAX"
+		cost_l.add_theme_color_override("font_color", branch_col.darkened(0.2))
 	elif can:
-		badge.text = str(cost)
-		badge.add_theme_color_override("font_color", Color(0.72, 0.42, 0.08))
+		cost_l.text = "%d PC" % cost
+		cost_l.add_theme_color_override("font_color", Color(0.72, 0.42, 0.08))
 	elif unlocked:
-		badge.text = str(cost)
-		badge.add_theme_color_override("font_color", Color(0.45, 0.40, 0.34))
+		cost_l.text = "%d PC" % cost
+		cost_l.add_theme_color_override("font_color", Color(0.42, 0.40, 0.34))
+	elif not prestige_ok:
+		cost_l.text = "P%d" % GameState.skill_prestige_required(skill_id)
+		cost_l.add_theme_color_override("font_color", Color(0.55, 0.32, 0.28))
 	else:
-		badge.text = ""
-	root.add_child(badge)
+		cost_l.text = "%d PC" % cost
+		cost_l.add_theme_color_override("font_color", Color(0.55, 0.52, 0.48))
+	root.add_child(cost_l)
 
 	if can:
 		var tw := root.create_tween().set_loops()
-		tw.tween_property(root, "modulate", Color(1.08, 1.04, 0.96), 0.8)
-		tw.tween_property(root, "modulate", Color.WHITE, 0.8)
+		tw.tween_property(root, "modulate", Color(1.06, 1.04, 0.96), 0.75)
+		tw.tween_property(root, "modulate", Color.WHITE, 0.75)
 
 	root.mouse_entered.connect(func():
-		_show_skill_tip(skill_id, root)
-		root.scale = Vector2(1.08, 1.08)
+		if not _skill_tip_pinned:
+			_show_skill_tip(skill_id, root, false)
+		root.scale = Vector2(1.06, 1.06)
 	)
 	root.mouse_exited.connect(func():
 		root.scale = Vector2.ONE
-		if _skill_tip_skill_id == skill_id:
-			_hide_skill_tip()
+		if not _skill_tip_pinned and _skill_tip_skill_id == skill_id:
+			_hide_skill_tip(false)
 	)
 	root.gui_input.connect(func(ev: InputEvent):
 		if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-			if can:
-				GameState.buy_skill(skill_id)
-				_rebuild_skill_modal()
-				_refresh_player_hud()
+			_skill_selected_id = skill_id
+			_skill_tip_pinned = true
+			_show_skill_tip(skill_id, root, true)
+			## Refresh sélection visuelle
+			_rebuild_skill_modal()
+			call_deferred("_reopen_skill_tip_after_buy", skill_id)
 	)
 	return root
 
