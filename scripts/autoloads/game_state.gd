@@ -50,7 +50,7 @@ const XP_LEVEL_BASE := 200
 const XP_LEVEL_GROWTH := 1.36
 const RELIC_MAX_LEVEL := 5
 const SAVE_PATH := "user://crop_express_save.json"
-const SAVE_VERSION := 8
+const SAVE_VERSION := 9
 const FERTILIZER_GROW_MULT := 1.5
 const FERTILIZER_BASE_COST := 180
 const FERTILIZER_COST_GROWTH := 1.70
@@ -126,7 +126,7 @@ var _last_claim_xp: int = 0
 var _fert_cover_dirty: bool = true
 var _fert_cover: PackedFloat32Array = PackedFloat32Array()
 
-## Compétences (arbre XP) — reset au prestige
+## Compétences (arbre XP) — reset au prestige ; niveau 0 = non acquis
 var skills_owned: Dictionary = {}
 var combo_overflow_gained: float = 0.0
 var free_refuses_left: int = 0
@@ -179,128 +179,185 @@ const _CLIENT_NAMES := [
 
 const _SKILL_ORDER := [
 	"root_hub",
-	"combo_flash", "combo_boost", "combo_cd", "combo_master",
+	"combo_flash", "combo_frenzy_power", "combo_frenzy_window", "combo_frenzy_duration",
+	"combo_cd", "combo_chain",
 	"xp_mission", "xp_curve", "xp_mission_2", "xp_prestige_prep",
-	"order_time", "order_slots", "order_flow", "order_refuse",
-	"money_mission", "money_shop", "money_start", "money_crit",
+	"order_time", "order_flow", "order_slots", "order_refuse",
+	"money_mission", "money_shop", "money_crit", "money_start",
 	"atelier_gears", "atelier_long_arms", "atelier_wide_tour", "atelier_live_chain", "atelier_network",
 ]
+
+const _SKILL_BRANCH_LABELS := {
+	"combo": "Rythme & Burst",
+	"xp": "Course au Prestige",
+	"orders": "Logisticien",
+	"money": "Marchand",
+	"atelier": "Machines",
+	"trunk": "Tronc",
+}
+
+## Palier par niveau (index 0 = niv. 1)
+const _COMBO_FLASH_NEEDED := [3, 2, 1]
+const _COMBO_FRENZY_POWER := [2.3, 2.6, 3.0]
+const _COMBO_FRENZY_WINDOW := [12.0, 14.0, 16.0]
+const _COMBO_FRENZY_DURATION := [35.0, 40.0, 45.0]
+const _COMBO_CD_SEC := [95.0, 85.0, 75.0]
+const _COMBO_CHAIN_PER_HIT := [1.0, 2.0, 3.0]
+const _COMBO_CHAIN_CAP := [5.0, 10.0, 15.0]
+const _XP_MISSION_BONUS := [0.10, 0.15, 0.20]
+const _XP_CURVE_MULT := [0.95, 0.90, 0.85]
+const _ORDER_TIME_MULT := [1.10, 1.20, 1.30]
+const _ORDER_FLOW_MULT := [0.92, 0.83, 0.75]
+const _MONEY_MISSION_BONUS := [0.10, 0.15, 0.20]
+const _MONEY_SHOP_MULT := [0.97, 0.95, 0.92]
+const _MONEY_CRIT_CHANCE := [0.08, 0.12, 0.16]
+const _ATELIER_GEARS_MULT := [0.96, 0.92, 0.88]
+const _ATELIER_GARDENER_INTERVAL := [1.8, 1.6, 1.4]
 
 const _SKILL_DEFS := {
 	"root_hub": {
 		"title": "Main verte", "short": "Splash",
-		"desc": "Clic sur une culture : +25 % de la puissance sur les parcelles voisines (niv.1). Améliorable plus tard jusqu’à 100 %.",
-		"cost": 1, "icon": "ui_click_hand", "parent": "", "branch": "trunk", "hub": true,
+		"desc": "Clic : salve sur les 8 voisins. +25 % / niv de la puissance de clic (max 100 %).",
+		"cost": 1, "costs": [1, 1, 2, 2], "max_level": 4,
+		"icon": "ui_click_hand", "parent": "", "branch": "trunk", "hub": true,
 	},
-	## Combo — spé Rythme / burst
 	"combo_flash": {
 		"title": "Combo Flash", "short": "Flash",
-		"desc": "Spé Combo : seuil 4 \u2192 3 livraisons. Enchaîne plus vite la Frénésie.",
-		"cost": 2, "icon": "ui_combo", "parent": "root_hub", "branch": "combo",
+		"desc": "Seuil Frénésie : 4→3, puis 3→2, puis 2→1 livraisons.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_combo", "parent": "root_hub", "branch": "combo",
 	},
-	"combo_boost": {
-		"title": "Frénésie", "short": "Frénésie",
-		"desc": "Capstone burst : fenêtre 16 s · boost ×2,5 · durée 40 s.",
-		"cost": 2, "icon": "ui_shop_speed", "parent": "combo_flash", "branch": "combo",
+	"combo_frenzy_power": {
+		"title": "Frénésie — Puissance", "short": "Puissance",
+		"desc": "Vitesse de pousse pendant le boost : ×2,3 → ×2,6 → ×3,0.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_shop_speed", "parent": "combo_flash", "branch": "combo",
+	},
+	"combo_frenzy_window": {
+		"title": "Frénésie — Fenêtre", "short": "Fenêtre",
+		"desc": "Temps pour enchaîner les livraisons : 12 → 14 → 16 s.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_chrono", "parent": "combo_flash", "branch": "combo",
+	},
+	"combo_frenzy_duration": {
+		"title": "Frénésie — Durée", "short": "Durée",
+		"desc": "Durée du boost actif : 35 → 40 → 45 s.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_hourglass", "parent": "combo_flash", "branch": "combo",
 	},
 	"combo_cd": {
 		"title": "Relance rapide", "short": "Relance",
-		"desc": "Spé Combo : cooldown 105 \u2192 90 s. Plus de fenêtres par run.",
-		"cost": 2, "icon": "ui_chrono", "parent": "combo_flash", "branch": "combo",
+		"desc": "Cooldown après boost : 105 → 95 → 85 → 75 s.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_chrono", "parent": "combo_flash", "branch": "combo",
 	},
-	"combo_master": {
+	"combo_chain": {
 		"title": "Enchaînement", "short": "Enchaîne",
-		"desc": "Capstone Combo : pendant le boost, +3 s / livraison (max +15 s).",
-		"cost": 3, "icon": "ui_combo", "parent": "combo_flash", "branch": "combo",
+		"desc": "Pendant le boost : +1 / +2 / +3 s par livraison (cap +5 / +10 / +15 s).",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_combo", "parent": "combo_flash", "branch": "combo",
 	},
-	## XP — spé Race prestige
 	"xp_mission": {
 		"title": "Savoir maraîcher", "short": "Savoir",
-		"desc": "Spé XP : +20 % XP livraisons. Race vers le prochain prestige.",
-		"cost": 2, "icon": "ui_xp", "parent": "root_hub", "branch": "xp",
+		"desc": "XP livraisons : +10 % → +15 % → +20 %.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_xp", "parent": "root_hub", "branch": "xp",
 	},
 	"xp_curve": {
 		"title": "Apprentissage", "short": "Courbe",
-		"desc": "Spé XP : XP requise −15 %. Niveaux plus rapides.",
-		"cost": 2, "icon": "ui_xp", "parent": "xp_mission", "branch": "xp",
+		"desc": "XP requise : −5 % → −10 % → −15 %.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_xp", "parent": "xp_mission", "branch": "xp",
 	},
 	"xp_mission_2": {
 		"title": "Grand savoir", "short": "Grand",
-		"desc": "Spé XP : +20 % XP encore. Stack avec Savoir.",
-		"cost": 2, "icon": "ui_xp", "parent": "xp_mission", "branch": "xp",
+		"desc": "XP livraisons (stack) : +10 % → +15 % → +20 %.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_xp", "parent": "xp_mission", "branch": "xp",
 	},
 	"xp_prestige_prep": {
 		"title": "Ambition", "short": "Ambition",
-		"desc": "Capstone XP : au prestige, conserve 1 PC pour démarrer ta prochaine spé.",
-		"cost": 3, "icon": "ui_coin_prestige", "parent": "xp_mission", "branch": "xp",
+		"desc": "Capstone XP : au prestige, conserve 1 PC pour ta prochaine spé.",
+		"cost": 3, "max_level": 1,
+		"icon": "ui_coin_prestige", "parent": "xp_mission", "branch": "xp",
 	},
-	## Commandes — spé Logisticien
 	"order_time": {
 		"title": "Clients patients", "short": "Patients",
-		"desc": "Spé Commandes : +30 % durée. Moins de stress chrono.",
-		"cost": 2, "icon": "ui_chrono", "parent": "root_hub", "branch": "orders",
-	},
-	"order_slots": {
-		"title": "Carnet rempli", "short": "Carnet",
-		"desc": "Duo logisticien : +1 commande active max.",
-		"cost": 2, "icon": "ui_mission", "parent": "order_time", "branch": "orders",
+		"desc": "Durée commandes : +10 % → +20 % → +30 %.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_chrono", "parent": "root_hub", "branch": "orders",
 	},
 	"order_flow": {
 		"title": "Bouche à oreille", "short": "Flux",
-		"desc": "Spé Commandes : refresh −25 %. Plus de volume.",
-		"cost": 2, "icon": "ui_truck", "parent": "order_time", "branch": "orders",
+		"desc": "Refresh commandes : −8 % → −17 % → −25 %.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_truck", "parent": "order_time", "branch": "orders",
+	},
+	"order_slots": {
+		"title": "Carnet rempli", "short": "Carnet",
+		"desc": "+1 commande active max.",
+		"cost": 2, "max_level": 1,
+		"icon": "ui_mission", "parent": "order_time", "branch": "orders",
 	},
 	"order_refuse": {
 		"title": "File sélective", "short": "Refus",
-		"desc": "Duo logisticien : 1 refus / run sans long refresh.",
-		"cost": 1, "icon": "ui_btn_cancel", "parent": "order_time", "branch": "orders",
+		"desc": "1 refus / run sans long refresh.",
+		"cost": 1, "max_level": 1,
+		"icon": "ui_btn_cancel", "parent": "order_time", "branch": "orders",
 	},
-	## Or — spé Marchand
 	"money_mission": {
 		"title": "Négociant", "short": "Négocé",
-		"desc": "Spé Or : +20 % or livraisons. Snowball boutique.",
-		"cost": 2, "icon": "ui_shop_money", "parent": "root_hub", "branch": "money",
+		"desc": "Or livraisons : +10 % → +15 % → +20 %.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_shop_money", "parent": "root_hub", "branch": "money",
 	},
 	"money_shop": {
 		"title": "Soldeur", "short": "Soldeur",
-		"desc": "Duo marchand : coûts boutique −8 %.",
-		"cost": 2, "icon": "ui_tab_shop", "parent": "money_mission", "branch": "money",
-	},
-	"money_start": {
-		"title": "Caisse de départ", "short": "Départ",
-		"desc": "Spé Or : +50 or immédiatement à l’achat.",
-		"cost": 2, "icon": "ui_coin", "parent": "money_mission", "branch": "money",
+		"desc": "Coûts boutique : −3 % → −5 % → −8 %.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_tab_shop", "parent": "money_mission", "branch": "money",
 	},
 	"money_crit": {
 		"title": "Pourboire", "short": "Pourboire",
-		"desc": "Capstone marchand : 10 % chance de doubler l’or d’une livraison.",
-		"cost": 3, "icon": "ui_sparkle", "parent": "money_mission", "branch": "money",
+		"desc": "Chance double or : 8 % → 12 % → 16 %.",
+		"cost": 3, "costs": [3, 3, 4], "max_level": 3,
+		"icon": "ui_sparkle", "parent": "money_mission", "branch": "money",
 	},
-	## Atelier — spé Machines
+	"money_start": {
+		"title": "Caisse de départ", "short": "Départ",
+		"desc": "+50 or immédiatement à l\u2019achat.",
+		"cost": 2, "max_level": 1,
+		"icon": "ui_coin", "parent": "money_mission", "branch": "money",
+	},
 	"atelier_gears": {
 		"title": "Rouages", "short": "Rouages",
-		"desc": "Spé Machines : coûts d’achat machines −12 %.",
-		"cost": 2, "icon": "ui_gardener", "parent": "root_hub", "branch": "atelier",
+		"desc": "Coûts machines : −4 % → −8 % → −12 %. Requiert P1.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 1,
+		"icon": "ui_gardener", "parent": "root_hub", "branch": "atelier",
 	},
 	"atelier_long_arms": {
 		"title": "Bras longs", "short": "Bras",
-		"desc": "Portée des fertiliseurs +1.",
-		"cost": 2, "icon": "ui_fertilizer", "parent": "atelier_gears", "branch": "atelier",
+		"desc": "Portée fertiliseurs +1 / niv (max +3). Requiert P1.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 1,
+		"icon": "ui_fertilizer", "parent": "atelier_gears", "branch": "atelier",
 	},
 	"atelier_wide_tour": {
 		"title": "Tournée large", "short": "Tournée",
-		"desc": "Portée des jardiniers +1.",
-		"cost": 2, "icon": "ui_auto_harvester", "parent": "atelier_gears", "branch": "atelier",
+		"desc": "Portée jardiniers +1 / niv (max +3). Requiert P3.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 3,
+		"icon": "ui_auto_harvester", "parent": "atelier_gears", "branch": "atelier",
 	},
 	"atelier_live_chain": {
 		"title": "Chaîne vive", "short": "Chaîne",
-		"desc": "Jardiniers : délai de tournée −20 % (2,0 s \u2192 1,6 s).",
-		"cost": 2, "icon": "ui_chrono", "parent": "atelier_gears", "branch": "atelier",
+		"desc": "Délai jardinier : 1,8 s → 1,6 s → 1,4 s. Requiert P3.",
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 3,
+		"icon": "ui_chrono", "parent": "atelier_gears", "branch": "atelier",
 	},
 	"atelier_network": {
 		"title": "Réseau", "short": "Réseau",
-		"desc": "Capstone Atelier : +1 portée fertiliseurs et jardiniers.",
-		"cost": 3, "icon": "ui_auto_delivery", "parent": "atelier_gears", "branch": "atelier",
+		"desc": "Capstone : +1 portée fertiliseurs et jardiniers. Requiert P5.",
+		"cost": 3, "max_level": 1, "prestige_req": 5,
+		"icon": "ui_auto_delivery", "parent": "atelier_gears", "branch": "atelier",
 	},
 }
 
@@ -797,28 +854,53 @@ func grow_speed_mult() -> float:
 
 
 func combo_needed() -> int:
-	var n := COMBO_NEEDED_FLASH if has_skill("combo_flash") else COMBO_NEEDED
+	var lv := get_skill_level("combo_flash")
+	var n: int = COMBO_NEEDED if lv <= 0 else int(_COMBO_FLASH_NEEDED[mini(lv, _COMBO_FLASH_NEEDED.size()) - 1])
 	if get_relic_level("pulse_tempo") >= 2:
 		n = maxi(2, n - 1)
 	return n
 
 
 func combo_window_sec() -> float:
-	var t := COMBO_WINDOW_WIDE if has_skill("combo_boost") else COMBO_WINDOW
+	var lv := get_skill_level("combo_frenzy_window")
+	var t: float = COMBO_WINDOW if lv <= 0 else float(_COMBO_FRENZY_WINDOW[mini(lv, _COMBO_FRENZY_WINDOW.size()) - 1])
 	t += float(get_relic_level("pulse_tempo"))
 	return t
 
 
 func combo_boost_mult() -> float:
-	return COMBO_BOOST_MULT_POWER if has_skill("combo_boost") else COMBO_BOOST_MULT
+	var lv := get_skill_level("combo_frenzy_power")
+	if lv <= 0:
+		return COMBO_BOOST_MULT
+	return _COMBO_FRENZY_POWER[mini(lv, _COMBO_FRENZY_POWER.size()) - 1]
 
 
 func combo_boost_duration_sec() -> float:
-	return COMBO_BOOST_DURATION_LONG if has_skill("combo_boost") else COMBO_BOOST_DURATION
+	var lv := get_skill_level("combo_frenzy_duration")
+	if lv <= 0:
+		return COMBO_BOOST_DURATION
+	return _COMBO_FRENZY_DURATION[mini(lv, _COMBO_FRENZY_DURATION.size()) - 1]
 
 
 func combo_cooldown_sec() -> float:
-	return COMBO_COOLDOWN_FAST if has_skill("combo_cd") else COMBO_COOLDOWN
+	var lv := get_skill_level("combo_cd")
+	if lv <= 0:
+		return COMBO_COOLDOWN
+	return _COMBO_CD_SEC[mini(lv, _COMBO_CD_SEC.size()) - 1]
+
+
+func combo_chain_per_hit() -> float:
+	var lv := get_skill_level("combo_chain")
+	if lv <= 0:
+		return 0.0
+	return _COMBO_CHAIN_PER_HIT[mini(lv, _COMBO_CHAIN_PER_HIT.size()) - 1]
+
+
+func combo_chain_cap() -> float:
+	var lv := get_skill_level("combo_chain")
+	if lv <= 0:
+		return 0.0
+	return _COMBO_CHAIN_CAP[mini(lv, _COMBO_CHAIN_CAP.size()) - 1]
 
 
 func combo_progress() -> int:
@@ -841,8 +923,9 @@ func is_combo_ready() -> bool:
 
 func mission_money_mult() -> float:
 	var m := 1.0
-	if has_skill("money_mission"):
-		m *= 1.20
+	var mm := get_skill_level("money_mission")
+	if mm > 0:
+		m *= 1.0 + _MONEY_MISSION_BONUS[mini(mm, _MONEY_MISSION_BONUS.size()) - 1]
 	var gr := get_relic_level("golden_receipt")
 	if gr > 0:
 		m *= 1.0 + 0.05 * float(gr)
@@ -852,10 +935,12 @@ func mission_money_mult() -> float:
 
 func mission_xp_mult() -> float:
 	var m := 1.0
-	if has_skill("xp_mission"):
-		m *= 1.20
-	if has_skill("xp_mission_2"):
-		m *= 1.20
+	var xm := get_skill_level("xp_mission")
+	if xm > 0:
+		m *= 1.0 + _XP_MISSION_BONUS[mini(xm, _XP_MISSION_BONUS.size()) - 1]
+	var xm2 := get_skill_level("xp_mission_2")
+	if xm2 > 0:
+		m *= 1.0 + _XP_MISSION_BONUS[mini(xm2, _XP_MISSION_BONUS.size()) - 1]
 	var gl := get_relic_level("green_ledger")
 	if gl > 0:
 		m *= 1.0 + 0.05 * float(gl)
@@ -864,10 +949,7 @@ func mission_xp_mult() -> float:
 
 
 func click_splash_level() -> int:
-	## Niveaux futurs 1–4 (25 %…100 %). Pour l’instant : 1 si le hub est acheté.
-	if not has_skill("root_hub"):
-		return 0
-	return 1
+	return get_skill_level("root_hub")
 
 
 func click_splash_ratio() -> float:
@@ -927,11 +1009,17 @@ func prestige_bonus_pct_per_point() -> int:
 
 
 func xp_curve_mult() -> float:
-	return 0.85 if has_skill("xp_curve") else 1.0
+	var lv := get_skill_level("xp_curve")
+	if lv <= 0:
+		return 1.0
+	return _XP_CURVE_MULT[mini(lv, _XP_CURVE_MULT.size()) - 1]
 
 
 func order_duration_mult() -> float:
-	var m := 1.30 if has_skill("order_time") else 1.0
+	var m := 1.0
+	var ot := get_skill_level("order_time")
+	if ot > 0:
+		m *= _ORDER_TIME_MULT[mini(ot, _ORDER_TIME_MULT.size()) - 1]
 	var og := get_relic_level("open_gate")
 	if og > 0 and og < 3:
 		m *= 1.0 + 0.04 * float(og)
@@ -949,13 +1037,17 @@ func max_active_missions() -> int:
 
 func order_refresh_sec() -> float:
 	var t := ORDER_REFRESH_CD
-	if has_skill("order_flow"):
-		t *= 0.75
+	var of := get_skill_level("order_flow")
+	if of > 0:
+		t *= _ORDER_FLOW_MULT[mini(of, _ORDER_FLOW_MULT.size()) - 1]
 	return t
 
 
 func shop_cost_mult() -> float:
-	var m := 0.92 if has_skill("money_shop") else 1.0
+	var m := 1.0
+	var ms := get_skill_level("money_shop")
+	if ms > 0:
+		m *= _MONEY_SHOP_MULT[mini(ms, _MONEY_SHOP_MULT.size()) - 1]
 	var oil := get_relic_level("machine_oil")
 	if oil > 0:
 		m *= maxf(0.70, 1.0 - 0.03 * float(oil))
@@ -1305,8 +1397,7 @@ func chebyshev_ring_indices(center: int, range_r: int) -> Array[int]:
 
 func fertilizer_range() -> int:
 	var r := 1
-	if has_skill("atelier_long_arms"):
-		r += 1
+	r += get_skill_level("atelier_long_arms")
 	if has_skill("atelier_network"):
 		r += 1
 	return r
@@ -1314,18 +1405,17 @@ func fertilizer_range() -> int:
 
 func gardener_range() -> int:
 	var r := 1
-	if has_skill("atelier_wide_tour"):
-		r += 1
+	r += get_skill_level("atelier_wide_tour")
 	if has_skill("atelier_network"):
 		r += 1
 	return r
 
 
 func gardener_interval() -> float:
-	var t := GARDENER_INTERVAL_BASE
-	if has_skill("atelier_live_chain"):
-		t *= 0.80
-	return t
+	var lv := get_skill_level("atelier_live_chain")
+	if lv <= 0:
+		return GARDENER_INTERVAL_BASE
+	return _ATELIER_GARDENER_INTERVAL[mini(lv, _ATELIER_GARDENER_INTERVAL.size()) - 1]
 
 
 func gardener_arms() -> int:
@@ -1335,8 +1425,9 @@ func gardener_arms() -> int:
 
 func machine_shop_cost_mult() -> float:
 	var m := shop_cost_mult()
-	if has_skill("atelier_gears"):
-		m *= 0.88
+	var ag := get_skill_level("atelier_gears")
+	if ag > 0:
+		m *= _ATELIER_GEARS_MULT[mini(ag, _ATELIER_GEARS_MULT.size()) - 1]
 	return m
 
 
@@ -1477,9 +1568,12 @@ func _claim_order(m: MissionData, silent: bool = false, emit_missions: bool = tr
 	var money_gain := maxi(1, int(m.coin_reward * mission_money_mult()))
 	var xp_gain := maxi(1, int(m.xp_reward * mission_xp_mult()))
 	var tip := false
-	if has_skill("money_crit") and randf() < 0.10:
-		money_gain *= 2
-		tip = true
+	var mc := get_skill_level("money_crit")
+	if mc > 0:
+		var crit_chance: float = _MONEY_CRIT_CHANCE[mini(mc, _MONEY_CRIT_CHANCE.size()) - 1]
+		if randf() < crit_chance:
+			money_gain *= 2
+			tip = true
 	_last_claim_money = money_gain
 	_last_claim_xp = xp_gain
 	add_money(money_gain)
@@ -1509,8 +1603,10 @@ func _claim_order(m: MissionData, silent: bool = false, emit_missions: bool = tr
 
 func _register_delivery_for_combo() -> void:
 	if combo_boost_left > 0.0:
-		if has_skill("combo_master") and combo_overflow_gained < COMBO_OVERFLOW_CAP:
-			var add := minf(COMBO_OVERFLOW_PER_HIT, COMBO_OVERFLOW_CAP - combo_overflow_gained)
+		var cap := combo_chain_cap()
+		var per_hit := combo_chain_per_hit()
+		if cap > 0.0 and per_hit > 0.0 and combo_overflow_gained < cap:
+			var add := minf(per_hit, cap - combo_overflow_gained)
 			combo_boost_left += add
 			combo_overflow_gained += add
 		combo_boost_changed.emit()
@@ -2089,29 +2185,76 @@ func skill_children(parent_id: String) -> Array:
 	return out
 
 
+func skill_branch_label(branch: String) -> String:
+	return str(_SKILL_BRANCH_LABELS.get(branch, branch))
+
+
+func get_skill_level(skill_id: String) -> int:
+	return maxi(0, int(skills_owned.get(skill_id, 0)))
+
+
+func skill_max_level(skill_id: String) -> int:
+	return maxi(1, int(get_skill_def(skill_id).get("max_level", 1)))
+
+
+func is_skill_maxed(skill_id: String) -> bool:
+	return get_skill_level(skill_id) >= skill_max_level(skill_id)
+
+
+func skill_prestige_required(skill_id: String) -> int:
+	return int(get_skill_def(skill_id).get("prestige_req", 0))
+
+
+func is_skill_prestige_met(skill_id: String) -> bool:
+	return prestige_level >= skill_prestige_required(skill_id)
+
+
+func skill_cost_for_next(skill_id: String) -> int:
+	var def := get_skill_def(skill_id)
+	if def.is_empty():
+		return 9999
+	var lv := get_skill_level(skill_id)
+	if def.has("costs"):
+		var costs: Array = def["costs"]
+		if lv < costs.size():
+			return int(costs[lv])
+		return 9999
+	var base := int(def.get("cost", 1))
+	var step := int(def.get("cost_step", 0))
+	return base + lv * step
+
+
 func is_skill_branch_unlocked(skill_id: String) -> bool:
 	if not _SKILL_DEFS.has(skill_id):
+		return false
+	if is_skill_maxed(skill_id):
+		return true
+	if not is_skill_prestige_met(skill_id):
 		return false
 	var def: Dictionary = _SKILL_DEFS[skill_id]
 	if def.has("parents_any"):
 		for p in def["parents_any"]:
-			if has_skill(str(p)):
+			if get_skill_level(str(p)) >= 1:
 				return true
 		return false
 	var prev := skill_prerequisite(skill_id)
 	if prev.is_empty():
 		return true
-	return has_skill(prev)
+	return get_skill_level(prev) >= 1
 
 
 func has_skill(skill_id: String) -> bool:
-	return bool(skills_owned.get(skill_id, false))
+	return get_skill_level(skill_id) >= 1
 
 
 func buy_skill(skill_id: String) -> bool:
-	if has_skill(skill_id):
+	if is_skill_maxed(skill_id):
+		toast.emit("Compétence déjà au niveau max.")
 		return false
 	if not is_skill_branch_unlocked(skill_id):
+		if not is_skill_prestige_met(skill_id):
+			toast.emit("Requiert prestige P%d." % skill_prestige_required(skill_id))
+			return false
 		var reqs := skill_prerequisites(skill_id)
 		var names: PackedStringArray = []
 		for p in reqs:
@@ -2121,14 +2264,18 @@ func buy_skill(skill_id: String) -> bool:
 	var def: Dictionary = get_skill_def(skill_id)
 	if def.is_empty():
 		return false
-	var cost: int = int(def.get("cost", 1))
+	var cost := skill_cost_for_next(skill_id)
 	if skill_points < cost:
 		toast.emit("Pas assez de Points de Compétence.")
 		return false
+	var prev_lv := get_skill_level(skill_id)
 	skill_points -= cost
 	skill_points_spent += cost
-	skills_owned[skill_id] = true
-	_apply_skill_purchase(skill_id)
+	skills_owned[skill_id] = prev_lv + 1
+	if prev_lv <= 0:
+		_apply_skill_purchase(skill_id)
+	else:
+		_apply_skill_level_up(skill_id, prev_lv + 1)
 	invalidate_fertilizer_cover()
 	level_changed.emit(player_level, skill_points)
 	skills_changed.emit()
@@ -2138,10 +2285,26 @@ func buy_skill(skill_id: String) -> bool:
 	return true
 
 
+func _apply_skill_level_up(skill_id: String, new_level: int) -> void:
+	var title := str(get_skill_def(skill_id).get("title", skill_id))
+	toast.emit("%s — niveau %d" % [title, new_level])
+	if skill_id == "xp_curve":
+		xp_required = _xp_for_player_level(player_level)
+		while xp >= xp_required:
+			xp -= xp_required
+			player_level += 1
+			skill_points += 1
+			xp_required = _xp_for_player_level(player_level)
+			toast.emit("Niveau %d ! +1 Point de Compétence" % player_level)
+		xp_changed.emit(xp, xp_required)
+		level_changed.emit(player_level, skill_points)
+		prestige_ready_changed.emit(can_prestige())
+
+
 func _apply_skill_purchase(skill_id: String) -> void:
 	match skill_id:
 		"combo_flash":
-			toast.emit("Combo Flash : 3 livraisons suffisent !")
+			toast.emit("Combo Flash niv.1 : 3 livraisons suffisent !")
 		"money_start":
 			add_money(MONEY_START_BONUS)
 			toast.emit("+%d or de caisse !" % MONEY_START_BONUS)
@@ -3170,6 +3333,74 @@ func claim_board_quest(quest_id: String) -> int:
 
 ## ——— Save / Load ———
 
+func _skill_level_from_save_value(v: Variant) -> int:
+	if typeof(v) == TYPE_BOOL:
+		return 1 if bool(v) else 0
+	if typeof(v) == TYPE_INT or typeof(v) == TYPE_FLOAT:
+		return maxi(0, int(v))
+	return 0
+
+
+func _apply_legacy_skill_level(skill_id: String, level: int) -> void:
+	if level <= 0:
+		return
+	match skill_id:
+		"combo_boost":
+			for sid in ["combo_frenzy_power", "combo_frenzy_window", "combo_frenzy_duration"]:
+				skills_owned[sid] = maxi(int(skills_owned.get(sid, 0)), level)
+		"combo_master":
+			skills_owned["combo_chain"] = maxi(int(skills_owned.get("combo_chain", 0)), level)
+		_:
+			if _SKILL_DEFS.has(skill_id):
+				skills_owned[skill_id] = maxi(int(skills_owned.get(skill_id, 0)), level)
+
+
+func _clamp_loaded_skill_levels() -> void:
+	for sid in skills_owned.duplicate():
+		if not _SKILL_DEFS.has(str(sid)):
+			skills_owned.erase(sid)
+			continue
+		var max_lv := skill_max_level(str(sid))
+		skills_owned[sid] = clampi(int(skills_owned[sid]), 0, max_lv)
+
+
+func _load_skills_from_save(data: Dictionary) -> void:
+	var owned = data.get("skills_owned", {})
+	if typeof(owned) == TYPE_DICTIONARY:
+		var rename := {
+			"root_orders": "root_hub", "root_xp": "root_hub", "root_money": "root_hub",
+			"combo_window": "combo_frenzy_window", "combo_power": "combo_frenzy_power",
+			"combo_duration": "combo_frenzy_duration",
+			"combo_cooldown": "combo_cd", "combo_overflow": "combo_chain",
+			"xp_curve_2": "xp_curve",
+			"order_refresh": "order_flow", "order_value": "order_slots",
+			"money_mission_2": "money_mission",
+		}
+		for k in owned:
+			var kid := str(k)
+			var lv := _skill_level_from_save_value(owned[k])
+			if lv <= 0:
+				continue
+			if rename.has(kid):
+				_apply_legacy_skill_level(str(rename[kid]), lv)
+			elif kid == "combo_boost" or kid == "combo_master":
+				_apply_legacy_skill_level(kid, lv)
+			elif _SKILL_DEFS.has(kid):
+				_apply_legacy_skill_level(kid, lv)
+	else:
+		if bool(data.get("skill_combo_flash", false)):
+			_apply_legacy_skill_level("combo_flash", 1)
+		if bool(data.get("skill_long_orders", false)):
+			_apply_legacy_skill_level("order_time", 1)
+		if bool(data.get("skill_xp_boost", false)):
+			_apply_legacy_skill_level("xp_mission", 1)
+		if bool(data.get("skill_money_boost", false)):
+			_apply_legacy_skill_level("money_mission", 1)
+		if not skills_owned.is_empty():
+			_apply_legacy_skill_level("root_hub", 1)
+	_clamp_loaded_skill_levels()
+
+
 func save_game() -> void:
 	var data := {
 		"version": SAVE_VERSION,
@@ -3234,8 +3465,8 @@ func load_game() -> bool:
 	if typeof(parsed) != TYPE_DICTIONARY:
 		return false
 	var data: Dictionary = parsed
-	## Pas de migrateur : anciennes saves (grille packing) invalidées.
-	if int(data.get("version", 0)) != SAVE_VERSION:
+	var save_ver := int(data.get("version", 0))
+	if save_ver != SAVE_VERSION and save_ver != 8:
 		push_warning("Save version mismatch (got %s, need %d) — starting fresh." % [
 			str(data.get("version", "?")), SAVE_VERSION
 		])
@@ -3259,36 +3490,7 @@ func load_game() -> bool:
 	## Si deja prestige avant cette version : ne pas reforcer le tuto reliques.
 	relics_intro_seen = bool(data.get("relics_intro_seen", prestige_level > 0))
 	skills_owned.clear()
-	var owned = data.get("skills_owned", {})
-	if typeof(owned) == TYPE_DICTIONARY:
-		var migrate := {
-			"root_orders": "root_hub", "root_xp": "root_hub", "root_money": "root_hub",
-			"combo_window": "combo_boost", "combo_power": "combo_boost", "combo_duration": "combo_boost",
-			"combo_cooldown": "combo_cd", "combo_overflow": "combo_master",
-			"xp_curve_2": "xp_curve",
-			"order_refresh": "order_flow", "order_value": "order_slots",
-			"money_mission_2": "money_mission",
-		}
-		for k in owned:
-			var kid := str(k)
-			if not bool(owned[k]):
-				continue
-			if migrate.has(kid):
-				skills_owned[str(migrate[kid])] = true
-			elif _SKILL_DEFS.has(kid):
-				skills_owned[kid] = true
-	else:
-		## Migration anciennes compétences booléennes
-		if bool(data.get("skill_combo_flash", false)):
-			skills_owned["combo_flash"] = true
-		if bool(data.get("skill_long_orders", false)):
-			skills_owned["order_time"] = true
-		if bool(data.get("skill_xp_boost", false)):
-			skills_owned["xp_mission"] = true
-		if bool(data.get("skill_money_boost", false)):
-			skills_owned["money_mission"] = true
-		if not skills_owned.is_empty():
-			skills_owned["root_hub"] = true
+	_load_skills_from_save(data)
 	## Toujours recalculer depuis la formule (courbe peut changer entre versions).
 	xp_required = _xp_for_player_level(player_level)
 	free_refuses_left = int(data.get("free_refuses_left", 0))
