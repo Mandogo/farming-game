@@ -27,6 +27,15 @@ Sans ça, le workflow plante avec `Get Pages site failed / Not Found`.
    Le workflow **écrase toujours** `index.html` avec `crops_express_idle.html` (évite une vieille version PWA).  
    Ou lance manuellement : Actions → Deploy GitHub Pages → Run workflow.
 
+### Deploy Actions qui échoue / « Deployment cancelled » ?
+
+Ce n’est en général **pas** un problème de contenu `web_export/` :
+- La file d’attente **GitHub Pages** (`actions/deploy-pages`) peut prendre **10–20+ min**.
+- L’ancien timeout (10 min) + `cancel-in-progress: true` faisait échouer / annuler le job.
+- Correctif workflow : timeout **30 min**, pas d’annulation du déploiement en cours.
+
+Laisse le job aller au bout ; un Re-run pendant qu’un autre tourne n’est plus nécessaire (et n’annule plus l’ancien).
+
 ### Navigateur bloqué à 92 % ?
 
 Cause typique : **service worker** qui mélange HTML neuf + JS/WASM anciens.  

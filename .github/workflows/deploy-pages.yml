@@ -16,9 +16,11 @@ permissions:
   pages: write
   id-token: write
 
+# Ne PAS annuler un déploiement en cours : la file GitHub Pages met souvent
+# 10–20+ min ; cancel-in-progress:true provoquait "Deployment cancelled" / reruns.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -44,6 +46,7 @@ jobs:
             exit 1
           fi
           ls -lah _site
+          du -sh _site
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
@@ -52,5 +55,8 @@ jobs:
         with:
           path: _site
 
+      # Timeout défaut = 10 min ; la file Pages dépasse souvent ça → faux échec.
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          timeout: 1800000
