@@ -7,6 +7,7 @@
 		<meta name="apple-mobile-web-app-capable" content="yes">
 		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 		<meta name="screen-orientation" content="landscape">
+		<meta name="apple-mobile-web-app-orientation" content="landscape">
 		<meta name="theme-color" content="#1a1f1c">
 		<link rel="preconnect" href="https://fonts.googleapis.com">
 		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -285,43 +286,32 @@ html, body {
 	font: 700 13px/1 system-ui, sans-serif;
 }
 
-/* Écran « tourne en paysage » (iOS / navigateurs sans lock API) */
-#orient-gate {
-	display: none;
+/* Paysage forcé en portrait : rotation CSS (iOS / navigateurs sans lock API) */
+#cei-shell {
+	width: 100%;
+	height: 100%;
+}
+
+html.cei-portrait,
+body.cei-portrait {
+	overflow: hidden;
+}
+
+body.cei-portrait #cei-shell {
 	position: fixed;
-	inset: 0;
-	z-index: 10000;
-	align-items: center;
-	justify-content: center;
-	flex-direction: column;
-	gap: 14px;
-	padding: 24px;
-	background: #1a1f1c;
-	color: #f2f5ef;
-	font: 700 16px/1.4 system-ui, -apple-system, Segoe UI, sans-serif;
-	text-align: center;
-}
-
-#orient-gate .ico {
-	font-size: 42px;
-	line-height: 1;
-}
-
-body.cei-portrait #orient-gate {
-	display: flex;
-}
-
-body.cei-portrait #canvas,
-body.cei-portrait #status,
-body.cei-portrait #mobile-tip {
-	visibility: hidden !important;
-	pointer-events: none !important;
+	top: 0;
+	left: 100vw;
+	width: 100vh;
+	height: 100vw;
+	transform: rotate(-90deg);
+	transform-origin: left top;
 }
 		</style>
 		$GODOT_HEAD_INCLUDE
 	</head>
 	<body>
 		<div id="cei-safe-probe" aria-hidden="true"></div>
+		<div id="cei-shell">
 		<canvas id="canvas">
 			Your browser does not support the canvas tag.
 		</canvas>
@@ -356,14 +346,10 @@ body.cei-portrait #mobile-tip {
 			<div id="status-notice"></div>
 		</div>
 
-		<div id="orient-gate" aria-live="polite">
-			<div class="ico" aria-hidden="true">📱↺</div>
-			<div>Tourne ton téléphone en paysage<br>pour jouer.</div>
-		</div>
-
 		<div id="mobile-tip" role="dialog" aria-live="polite">
 			Pour un vrai plein écran (sans barre d’URL) : ajoute le jeu à l’écran d’accueil.
 			<button type="button" id="mobile-tip-dismiss">OK</button>
+		</div>
 		</div>
 
 		<script src="$GODOT_URL"></script>
@@ -376,14 +362,28 @@ const engine = new Engine(GODOT_CONFIG);
 window.ceiSafeInsets = function () {
 	const probe = document.getElementById('cei-safe-probe');
 	const s = probe ? getComputedStyle(probe) : null;
+	let l = s ? (parseFloat(s.paddingLeft) || 0) : 0;
+	let t = s ? (parseFloat(s.paddingTop) || 0) : 0;
+	let r = s ? (parseFloat(s.paddingRight) || 0) : 0;
+	let b = s ? (parseFloat(s.paddingBottom) || 0) : 0;
 	const vv = window.visualViewport;
+	const physW = (vv && vv.width) || window.innerWidth || 1;
+	const physH = (vv && vv.height) || window.innerHeight || 1;
+	const portrait = document.body.classList.contains('cei-portrait');
+	if (portrait) {
+		const tmp = l;
+		l = t;
+		t = r;
+		r = b;
+		b = tmp;
+	}
 	return {
-		l: s ? (parseFloat(s.paddingLeft) || 0) : 0,
-		t: s ? (parseFloat(s.paddingTop) || 0) : 0,
-		r: s ? (parseFloat(s.paddingRight) || 0) : 0,
-		b: s ? (parseFloat(s.paddingBottom) || 0) : 0,
-		w: (vv && vv.width) || window.innerWidth || 1,
-		h: (vv && vv.height) || window.innerHeight || 1,
+		l: l,
+		t: t,
+		r: r,
+		b: b,
+		w: portrait ? physH : physW,
+		h: portrait ? physW : physH,
 	};
 };
 
@@ -447,12 +447,11 @@ window.ceiSafeInsets = function () {
 		}
 	}
 
-	function syncOrientationUi() {
+	function syncForcedLandscape() {
 		const portrait = isPortrait();
+		document.documentElement.classList.toggle('cei-portrait', portrait);
 		document.body.classList.toggle('cei-portrait', portrait);
-		if (!portrait) {
-			lockLandscape();
-		}
+		lockLandscape();
 	}
 
 	function fitViewport() {
@@ -462,12 +461,11 @@ window.ceiSafeInsets = function () {
 		document.body.style.height = h + 'px';
 		document.documentElement.style.width = w + 'px';
 		document.body.style.width = w + 'px';
+		syncForcedLandscape();
 		window.dispatchEvent(new Event('resize'));
-		syncOrientationUi();
 	}
 
-	syncOrientationUi();
-	lockLandscape();
+	syncForcedLandscape();
 	fitViewport();
 	window.addEventListener('resize', fitViewport);
 	window.addEventListener('orientationchange', () => setTimeout(fitViewport, 120));
@@ -477,8 +475,7 @@ window.ceiSafeInsets = function () {
 	}
 	document.addEventListener('visibilitychange', function () {
 		if (!document.hidden) {
-			lockLandscape();
-			syncOrientationUi();
+			fitViewport();
 		}
 	});
 	window.addEventListener('click', lockLandscape, { once: true });
