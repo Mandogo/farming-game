@@ -120,6 +120,11 @@ var _skill_map: Control = null
 var _skill_panning: bool = false
 var _skill_pan_last: Vector2 = Vector2.ZERO
 var _skill_pan_offset: Vector2 = Vector2.ZERO
+var _skill_zoom: float = 1.0
+var _skill_pinch_dist: float = -1.0
+var _skill_touch_pts: Dictionary = {} ## index → position (pinch)
+const SKILL_ZOOM_MIN := 0.32
+const SKILL_ZOOM_MAX := 1.40
 ## Tooltip survol uniquement (pas d'?pinglage).
 var _combo_status_l: Label = null
 var _combo_reward_l: Label = null
@@ -1832,7 +1837,10 @@ func _close_skill_tree() -> void:
 	_skill_selected_id = ""
 	_skill_tip_pinned = false
 	_skill_panning = false
-	_skill_pan_offset = Vector2.ZERO ## prochain open recentré sur le hub
+	_skill_pan_offset = Vector2.ZERO
+	_skill_zoom = 1.0
+	_skill_pinch_dist = -1.0
+	_skill_touch_pts.clear()
 	_hide_skill_tip(true)
 	if skill_tree_overlay:
 		skill_tree_overlay.visible = false
@@ -1854,18 +1862,18 @@ func _make_parchment_style() -> StyleBoxFlat:
 
 
 func _make_skill_tree_panel_style() -> StyleBoxFlat:
-	## Même langage que SellModal / TerrainEdit : crème + bordure mousse.
+	## Panneau sombre élégant (nuit mousse).
 	var st := StyleBoxFlat.new()
-	st.bg_color = Color(0.95, 0.96, 0.91, 0.98) ## #F2F5E8
-	st.border_color = Color(0.42, 0.55, 0.34, 0.85) ## #6B8C57
+	st.bg_color = Color(0.12, 0.16, 0.14, 0.98)
+	st.border_color = Color(0.32, 0.48, 0.36, 0.85)
 	st.set_border_width_all(2)
 	st.set_corner_radius_all(16)
 	st.content_margin_left = 10
 	st.content_margin_right = 10
 	st.content_margin_top = 8
 	st.content_margin_bottom = 8
-	st.shadow_color = Color(0.12, 0.18, 0.12, 0.28)
-	st.shadow_size = 16
+	st.shadow_color = Color(0.02, 0.04, 0.03, 0.45)
+	st.shadow_size = 18
 	return st
 
 
@@ -4569,7 +4577,7 @@ func _fill_missions_tab() -> void:
 func _rebuild_skill_modal() -> void:
 	if skill_tree_vbox == null:
 		return
-	## Conserve la position de pan pendant un achat / refresh
+	## Conserve pan + zoom pendant un achat / refresh
 	if _skill_map != null and is_instance_valid(_skill_map):
 		_skill_pan_offset = _skill_map.position
 	for c in skill_tree_vbox.get_children():
@@ -5276,7 +5284,7 @@ func _scroll_boost_info_to_current(scroll: ScrollContainer, list: VBoxContainer,
 
 
 func _fill_skills() -> void:
-	## Carte pannable type Slay the Spire / idle talent tree — 5 axes bien séparés.
+	## Arbre bas→haut, fond sombre, vue dézoomée + zoom/pan.
 	var host: VBoxContainer = skill_tree_vbox
 	if host == null:
 		return
@@ -5288,9 +5296,11 @@ func _fill_skills() -> void:
 		_skill_tip = null
 	_skill_selected_id = keep_sel
 	_skill_panning = false
+	_skill_pinch_dist = -1.0
+	_skill_touch_pts.clear()
 
 	var header := HBoxContainer.new()
-	header.add_theme_constant_override("separation", 10)
+	header.add_theme_constant_override("separation", 8)
 	host.add_child(header)
 
 	var title_box := VBoxContainer.new()
@@ -5300,47 +5310,29 @@ func _fill_skills() -> void:
 	var title := Label.new()
 	title.text = "Arbre de compétences"
 	title.add_theme_font_size_override("font_size", 18)
-	title.add_theme_color_override("font_color", Color(0.22, 0.36, 0.20)) ## moss
+	title.add_theme_color_override("font_color", Color(0.88, 0.94, 0.84))
 	title_box.add_child(title)
 	var hint := Label.new()
-	hint.text = "Glisse pour explorer · tape une compétence pour voir le détail"
+	hint.text = "Molette / pince = zoom · glisse pour explorer"
 	hint.add_theme_font_size_override("font_size", 11)
-	hint.add_theme_color_override("font_color", Color(0.42, 0.50, 0.38))
+	hint.add_theme_color_override("font_color", Color(0.58, 0.68, 0.58))
 	title_box.add_child(hint)
 
 	header.add_child(_make_skill_pc_badge())
-	var recenter := Button.new()
-	recenter.text = "Recentrer"
-	recenter.focus_mode = Control.FOCUS_NONE
-	recenter.custom_minimum_size = Vector2(0, 30)
-	recenter.add_theme_font_size_override("font_size", 12)
-	recenter.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	var rst := StyleBoxFlat.new()
-	rst.bg_color = Color(0.90, 0.92, 0.84, 1.0)
-	rst.border_color = Color(0.50, 0.62, 0.40, 0.75)
-	rst.set_border_width_all(1)
-	rst.set_corner_radius_all(8)
-	rst.content_margin_left = 10
-	rst.content_margin_right = 10
-	rst.content_margin_top = 4
-	rst.content_margin_bottom = 4
-	for sn in ["normal", "hover", "pressed"]:
-		var s2 := rst.duplicate()
-		if sn == "hover":
-			s2.bg_color = s2.bg_color.lightened(0.06)
-		recenter.add_theme_stylebox_override(sn, s2)
-	recenter.add_theme_color_override("font_color", Color(0.28, 0.38, 0.22))
-	recenter.pressed.connect(_skill_center_on_hub)
-	header.add_child(recenter)
-	header.add_child(_make_ui_close_button(_close_skill_tree, true))
+	header.add_child(_make_skill_zoom_btn("−", -1))
+	header.add_child(_make_skill_zoom_btn("+", 1))
+	var fit_btn := _make_skill_zoom_btn("⊡", 0)
+	fit_btn.tooltip_text = "Vue d'ensemble"
+	fit_btn.pressed.connect(_skill_fit_overview)
+	header.add_child(fit_btn)
+	header.add_child(_make_ui_close_button(_close_skill_tree, false))
 
-	## Zone de carte (clip + pan) — cadre mousse transparent pour laisser voir la clairière
 	var stage := PanelContainer.new()
 	stage.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	stage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var stage_st := StyleBoxFlat.new()
-	stage_st.bg_color = Color(0.80, 0.86, 0.72, 0.35)
-	stage_st.border_color = Color(0.50, 0.64, 0.42, 0.70)
+	stage_st.bg_color = Color(0.08, 0.11, 0.10, 1.0)
+	stage_st.border_color = Color(0.28, 0.40, 0.32, 0.70)
 	stage_st.set_border_width_all(2)
 	stage_st.set_corner_radius_all(14)
 	stage_st.content_margin_left = 0
@@ -5363,33 +5355,86 @@ func _fill_skills() -> void:
 	var map := _build_skill_mindmap()
 	pan_host.add_child(map)
 	_skill_map = map
+	map.scale = Vector2(_skill_zoom, _skill_zoom)
 
-	## Centrer le hub au premier affichage ; sinon restaurer le pan
 	pan_host.resized.connect(func():
 		if is_instance_valid(map) and is_instance_valid(pan_host):
 			_skill_clamp_pan()
 	)
-	if _skill_pan_offset != Vector2.ZERO:
+	if _skill_pan_offset != Vector2.ZERO and _skill_zoom > 0.01:
 		map.position = _skill_pan_offset
+		map.scale = Vector2(_skill_zoom, _skill_zoom)
 		call_deferred("_skill_clamp_pan")
 	else:
-		call_deferred("_skill_center_on_hub")
+		call_deferred("_skill_fit_overview")
 
-	## Pan souris / doigt (pas sur les nœuds — ils STOP)
 	pan_host.gui_input.connect(_on_skill_pan_input)
 
 
-func _skill_center_on_hub() -> void:
+func _make_skill_zoom_btn(label: String, dir: int) -> Button:
+	var btn := Button.new()
+	btn.text = label
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.custom_minimum_size = Vector2(34, 30)
+	btn.add_theme_font_size_override("font_size", 16)
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	var bg := Color(0.18, 0.24, 0.20, 1.0)
+	var bd := Color(0.40, 0.55, 0.42, 0.80)
+	for sn in ["normal", "hover", "pressed"]:
+		var st := StyleBoxFlat.new()
+		st.bg_color = bg.lightened(0.08) if sn == "hover" else (bg.darkened(0.06) if sn == "pressed" else bg)
+		st.border_color = bd
+		st.set_border_width_all(1)
+		st.set_corner_radius_all(8)
+		btn.add_theme_stylebox_override(sn, st)
+	btn.add_theme_color_override("font_color", Color(0.86, 0.92, 0.84))
+	if dir != 0:
+		btn.pressed.connect(func():
+			_skill_zoom_by(1.18 if dir > 0 else 1.0 / 1.18)
+		)
+	return btn
+
+
+func _skill_fit_overview() -> void:
 	if _skill_map == null or _skill_pan_host == null:
 		return
 	if not is_instance_valid(_skill_map) or not is_instance_valid(_skill_pan_host):
 		return
-	var hub_pos: Vector2 = _skill_map.get_meta("hub_pos", Vector2(1200, 900))
 	var view := _skill_pan_host.size
 	if view.x < 8.0 or view.y < 8.0:
 		return
-	_skill_map.position = view * 0.5 - hub_pos
+	var map_sz: Vector2 = _skill_map.get_meta("map_size", _skill_map.size)
+	var pad := 0.90
+	var z := mini(view.x / map_sz.x, view.y / map_sz.y) * pad
+	_skill_zoom = clampf(z, SKILL_ZOOM_MIN, SKILL_ZOOM_MAX)
+	_skill_map.scale = Vector2(_skill_zoom, _skill_zoom)
+	_skill_map.position = (view - map_sz * _skill_zoom) * 0.5
 	_skill_clamp_pan()
+
+
+func _skill_center_on_hub() -> void:
+	## Alias : recentre en vue d'ensemble (tronc visible).
+	_skill_fit_overview()
+
+
+func _skill_zoom_by(factor: float, focal: Vector2 = Vector2.INF) -> void:
+	if _skill_map == null or _skill_pan_host == null:
+		return
+	if not is_instance_valid(_skill_map) or not is_instance_valid(_skill_pan_host):
+		return
+	var old_z := _skill_zoom
+	var new_z := clampf(old_z * factor, SKILL_ZOOM_MIN, SKILL_ZOOM_MAX)
+	if absf(new_z - old_z) < 0.001:
+		return
+	var focus := focal
+	if focus == Vector2.INF:
+		focus = _skill_pan_host.size * 0.5
+	var map_pt := (focus - _skill_map.position) / maxf(0.001, old_z)
+	_skill_zoom = new_z
+	_skill_map.scale = Vector2(new_z, new_z)
+	_skill_map.position = focus - map_pt * new_z
+	_skill_clamp_pan()
+	_hide_skill_tip(false)
 
 
 func _skill_clamp_pan() -> void:
@@ -5398,12 +5443,12 @@ func _skill_clamp_pan() -> void:
 	if not is_instance_valid(_skill_map) or not is_instance_valid(_skill_pan_host):
 		return
 	var view := _skill_pan_host.size
-	var map_sz := _skill_map.size
-	## Laisse un peu de marge, empêche de perdre la carte
-	var min_x := view.x - map_sz.x - 40.0
-	var min_y := view.y - map_sz.y - 40.0
-	var max_x := 40.0
-	var max_y := 40.0
+	var map_sz: Vector2 = _skill_map.get_meta("map_size", _skill_map.size) * _skill_zoom
+	var margin := 48.0
+	var min_x := view.x - map_sz.x - margin
+	var min_y := view.y - map_sz.y - margin
+	var max_x := margin
+	var max_y := margin
 	if map_sz.x <= view.x:
 		_skill_map.position.x = (view.x - map_sz.x) * 0.5
 	else:
@@ -5425,11 +5470,10 @@ func _on_skill_pan_input(ev: InputEvent) -> void:
 				_skill_pan_last = mb.position
 			else:
 				_skill_panning = false
-		## Molette = pan vertical léger
 		elif mb.pressed and (mb.button_index == MOUSE_BUTTON_WHEEL_UP or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN):
-			var dy := -48.0 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 48.0
-			_skill_map.position.y -= dy
-			_skill_clamp_pan()
+			var factor := 1.12 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.12
+			_skill_zoom_by(factor, mb.position)
+			get_viewport().set_input_as_handled()
 	elif ev is InputEventMouseMotion and _skill_panning:
 		var mm := ev as InputEventMouseMotion
 		var delta := mm.position - _skill_pan_last
@@ -5440,15 +5484,39 @@ func _on_skill_pan_input(ev: InputEvent) -> void:
 	elif ev is InputEventScreenTouch:
 		var st := ev as InputEventScreenTouch
 		if st.pressed:
-			_skill_panning = true
-			_skill_pan_last = st.position
+			_skill_touch_pts[st.index] = st.position
+			if _skill_touch_pts.size() == 1:
+				_skill_panning = true
+				_skill_pan_last = st.position
+				_skill_pinch_dist = -1.0
+			elif _skill_touch_pts.size() >= 2:
+				_skill_panning = false
+				var pts: Array = _skill_touch_pts.values()
+				_skill_pinch_dist = pts[0].distance_to(pts[1])
 		else:
-			_skill_panning = false
-	elif ev is InputEventScreenDrag and _skill_panning:
+			_skill_touch_pts.erase(st.index)
+			if _skill_touch_pts.size() < 2:
+				_skill_pinch_dist = -1.0
+			if _skill_touch_pts.is_empty():
+				_skill_panning = false
+			elif _skill_touch_pts.size() == 1:
+				_skill_panning = true
+				_skill_pan_last = _skill_touch_pts.values()[0]
+	elif ev is InputEventScreenDrag:
 		var sd := ev as InputEventScreenDrag
-		_skill_map.position += sd.relative
-		_skill_clamp_pan()
-		_hide_skill_tip(false)
+		if _skill_touch_pts.has(sd.index):
+			_skill_touch_pts[sd.index] = sd.position
+		if _skill_touch_pts.size() >= 2 and _skill_pinch_dist > 0.0:
+			var pts2: Array = _skill_touch_pts.values()
+			var dist: float = pts2[0].distance_to(pts2[1])
+			if dist > 1.0:
+				var mid: Vector2 = (pts2[0] + pts2[1]) * 0.5
+				_skill_zoom_by(dist / _skill_pinch_dist, mid)
+				_skill_pinch_dist = dist
+		elif _skill_panning:
+			_skill_map.position += sd.relative
+			_skill_clamp_pan()
+			_hide_skill_tip(false)
 
 
 func _ensure_skill_tip() -> PanelContainer:
@@ -5672,24 +5740,24 @@ func _hide_skill_tip(force: bool = false) -> void:
 
 
 func _skill_petal_pos(hub: Vector2, ang: float, dist: float, lateral: float = 0.0) -> Vector2:
-	## Placement radial + décalage latéral (pétales type PoE / idle talent tree).
+	## Conservé pour compat ; layout principal = arbre vertical.
 	var forward := Vector2.from_angle(ang)
-	var side := Vector2(-forward.y, forward.x) ## perpendiculaire
+	var side := Vector2(-forward.y, forward.x)
 	return hub + forward * dist + side * lateral
 
 
 func _build_skill_mindmap() -> Control:
-	## Grande carte pannable — viewport montre le hub en gros, le joueur explore les pétales.
-	const MAP_W := 2400.0
-	const MAP_H := 1800.0
-	var hub := Vector2(MAP_W * 0.5, MAP_H * 0.5) ## 1200, 900
+	## Arbre : racine en bas, 5 axes = troncs vers le haut, sous-skills = branches.
+	const MAP_W := 1400.0
+	const MAP_H := 1680.0
+	var hub := Vector2(MAP_W * 0.5, 1520.0)
 	var map := Control.new()
 	map.custom_minimum_size = Vector2(MAP_W, MAP_H)
 	map.size = Vector2(MAP_W, MAP_H)
 	map.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map.set_meta("hub_pos", hub)
+	map.set_meta("map_size", Vector2(MAP_W, MAP_H))
 
-	## Fond clairière / arbre
 	var backdrop_script = load("res://scripts/ui/skill_tree_backdrop.gd")
 	if backdrop_script:
 		var backdrop = backdrop_script.new()
@@ -5697,55 +5765,57 @@ func _build_skill_mindmap() -> Control:
 		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		map.add_child(backdrop)
 
-	## 5 pétales à 72° (haut = combo). Distances larges pour ne plus se chevaucher.
-	const A_COMBO := -PI * 0.5
-	const A_XP := A_COMBO + TAU / 5.0
-	const A_MONEY := A_COMBO + 2.0 * TAU / 5.0
-	const A_ATELIER := A_COMBO + 3.0 * TAU / 5.0
-	const A_ORDERS := A_COMBO + 4.0 * TAU / 5.0
-	const R1 := 300.0 ## racine de branche
-	const R2 := 520.0 ## feuille / enfant
-	const R2b := 620.0 ## enfant un peu plus loin
-	const LAT := 130.0 ## écart latéral entre frères
+	## X des 5 troncs (gauche → droite)
+	const X_ORDERS := 160.0
+	const X_ATELIER := 400.0
+	const X_COMBO := 700.0
+	const X_MONEY := 1000.0
+	const X_XP := 1240.0
+	## Hauteurs : racine branche / milieu / cime
+	const Y_ROOT := 1180.0
+	const Y_MID := 820.0
+	const Y_TOP := 480.0
+	const Y_TIP := 280.0
+	const BR := 95.0 ## écart branche latérale
 
 	var layout := {
 		"root_hub": hub,
-		## Haut — Combo
-		"combo_flash": _skill_petal_pos(hub, A_COMBO, R1),
-		"combo_frenzy_power": _skill_petal_pos(hub, A_COMBO, R2b, 0.0),
-		"combo_frenzy_window": _skill_petal_pos(hub, A_COMBO, R2, -LAT * 1.15),
-		"combo_frenzy_duration": _skill_petal_pos(hub, A_COMBO, R2, LAT * 1.15),
-		"combo_cd": _skill_petal_pos(hub, A_COMBO, R2b, -LAT * 1.85),
-		"combo_chain": _skill_petal_pos(hub, A_COMBO, R2b, LAT * 1.85),
-		## Droite-haut — XP
-		"xp_mission": _skill_petal_pos(hub, A_XP, R1),
-		"xp_curve": _skill_petal_pos(hub, A_XP, R2, -LAT),
-		"xp_mission_2": _skill_petal_pos(hub, A_XP, R2b, 0.0),
-		"xp_prestige_prep": _skill_petal_pos(hub, A_XP, R2, LAT),
-		## Bas-droite — Or
-		"money_mission": _skill_petal_pos(hub, A_MONEY, R1),
-		"money_shop": _skill_petal_pos(hub, A_MONEY, R2, -LAT),
-		"money_start": _skill_petal_pos(hub, A_MONEY, R2b, 0.0),
-		"money_crit": _skill_petal_pos(hub, A_MONEY, R2, LAT),
-		## Bas-gauche — Atelier
-		"atelier_gears": _skill_petal_pos(hub, A_ATELIER, R1),
-		"atelier_long_arms": _skill_petal_pos(hub, A_ATELIER, R2, -LAT * 1.2),
-		"atelier_wide_tour": _skill_petal_pos(hub, A_ATELIER, R2b, -LAT * 0.35),
-		"atelier_live_chain": _skill_petal_pos(hub, A_ATELIER, R2b, LAT * 0.35),
-		"atelier_network": _skill_petal_pos(hub, A_ATELIER, R2, LAT * 1.2),
-		## Gauche-haut — Commandes
-		"order_time": _skill_petal_pos(hub, A_ORDERS, R1),
-		"order_flow": _skill_petal_pos(hub, A_ORDERS, R2, -LAT),
-		"order_slots": _skill_petal_pos(hub, A_ORDERS, R2b, 0.0),
-		"order_refuse": _skill_petal_pos(hub, A_ORDERS, R2, LAT),
+		## Tronc Combo (centre)
+		"combo_flash": Vector2(X_COMBO, Y_ROOT),
+		"combo_frenzy_window": Vector2(X_COMBO - BR, Y_MID),
+		"combo_frenzy_duration": Vector2(X_COMBO + BR, Y_MID),
+		"combo_cd": Vector2(X_COMBO - BR * 1.7, Y_TOP),
+		"combo_frenzy_power": Vector2(X_COMBO, Y_TOP),
+		"combo_chain": Vector2(X_COMBO + BR * 1.7, Y_TOP),
+		## Tronc Commandes
+		"order_time": Vector2(X_ORDERS, Y_ROOT),
+		"order_flow": Vector2(X_ORDERS - BR * 0.7, Y_MID),
+		"order_refuse": Vector2(X_ORDERS + BR * 0.7, Y_MID),
+		"order_slots": Vector2(X_ORDERS, Y_TOP),
+		## Tronc Atelier
+		"atelier_gears": Vector2(X_ATELIER, Y_ROOT),
+		"atelier_long_arms": Vector2(X_ATELIER - BR, Y_MID),
+		"atelier_network": Vector2(X_ATELIER + BR, Y_MID),
+		"atelier_wide_tour": Vector2(X_ATELIER - BR * 0.6, Y_TOP),
+		"atelier_live_chain": Vector2(X_ATELIER + BR * 0.6, Y_TOP),
+		## Tronc Or
+		"money_mission": Vector2(X_MONEY, Y_ROOT),
+		"money_shop": Vector2(X_MONEY - BR * 0.7, Y_MID),
+		"money_crit": Vector2(X_MONEY + BR * 0.7, Y_MID),
+		"money_start": Vector2(X_MONEY, Y_TOP),
+		## Tronc XP
+		"xp_mission": Vector2(X_XP, Y_ROOT),
+		"xp_curve": Vector2(X_XP - BR * 0.7, Y_MID),
+		"xp_prestige_prep": Vector2(X_XP + BR * 0.7, Y_MID),
+		"xp_mission_2": Vector2(X_XP, Y_TOP),
 	}
 
 	var branch_labels := {
-		"combo": {"pos": _skill_petal_pos(hub, A_COMBO, 780.0), "text": "Rythme & Burst"},
-		"xp": {"pos": _skill_petal_pos(hub, A_XP, 780.0), "text": "Course Prestige"},
-		"money": {"pos": _skill_petal_pos(hub, A_MONEY, 780.0), "text": "Marchand"},
-		"atelier": {"pos": _skill_petal_pos(hub, A_ATELIER, 780.0), "text": "Machines"},
-		"orders": {"pos": _skill_petal_pos(hub, A_ORDERS, 780.0), "text": "Logisticien"},
+		"orders": {"pos": Vector2(X_ORDERS, Y_TIP), "text": "Logisticien"},
+		"atelier": {"pos": Vector2(X_ATELIER, Y_TIP - 10.0), "text": "Machines"},
+		"combo": {"pos": Vector2(X_COMBO, Y_TIP - 40.0), "text": "Rythme & Burst"},
+		"money": {"pos": Vector2(X_MONEY, Y_TIP - 10.0), "text": "Marchand"},
+		"xp": {"pos": Vector2(X_XP, Y_TIP), "text": "Course Prestige"},
 	}
 
 	var link_host := Control.new()
@@ -5754,38 +5824,35 @@ func _build_skill_mindmap() -> Control:
 	link_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map.add_child(link_host)
 
-	## Labels de spécialisation
+	## Labels en haut de chaque tronc
 	for bkey in branch_labels:
 		var info: Dictionary = branch_labels[bkey]
 		var bc := _skill_branch_color(str(bkey))
 		var pill := PanelContainer.new()
 		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var pst := StyleBoxFlat.new()
-		pst.bg_color = Color(0.98, 0.97, 0.92, 0.88)
-		pst.border_color = Color(bc.r, bc.g, bc.b, 0.80)
+		pst.bg_color = Color(0.14, 0.18, 0.16, 0.92)
+		pst.border_color = Color(bc.r, bc.g, bc.b, 0.75)
 		pst.set_border_width_all(2)
-		pst.set_corner_radius_all(12)
-		pst.content_margin_left = 12
-		pst.content_margin_right = 12
-		pst.content_margin_top = 5
-		pst.content_margin_bottom = 5
-		pst.shadow_color = Color(0.15, 0.20, 0.12, 0.18)
-		pst.shadow_size = 4
+		pst.set_corner_radius_all(10)
+		pst.content_margin_left = 10
+		pst.content_margin_right = 10
+		pst.content_margin_top = 4
+		pst.content_margin_bottom = 4
 		pill.add_theme_stylebox_override("panel", pst)
 		var lbl := Label.new()
 		lbl.text = str(info["text"])
-		lbl.add_theme_font_size_override("font_size", 13)
-		lbl.add_theme_color_override("font_color", Color(bc.r * 0.40, bc.g * 0.40, bc.b * 0.40, 1.0))
+		lbl.add_theme_font_size_override("font_size", 12)
+		lbl.add_theme_color_override("font_color", Color(bc.r * 0.75 + 0.25, bc.g * 0.75 + 0.25, bc.b * 0.75 + 0.25, 1.0))
 		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		pill.add_child(lbl)
 		map.add_child(pill)
-		## Position approximative ; taille du label connue après add
 		var cpos: Vector2 = info["pos"]
 		pill.reset_size()
-		pill.position = cpos - Vector2(pill.get_combined_minimum_size().x * 0.5, 14.0)
+		pill.position = cpos - Vector2(pill.get_combined_minimum_size().x * 0.5, 10.0)
 
-	const NODE_SZ := Vector2(72, 72)
-	const HUB_SZ := Vector2(92, 92)
+	const NODE_SZ := Vector2(68, 68)
+	const HUB_SZ := Vector2(88, 88)
 	var nodes: Dictionary = {}
 	var centers: Dictionary = {}
 
@@ -5808,7 +5875,7 @@ func _build_skill_mindmap() -> Control:
 		_skill_nodes.append(node)
 		node.set_meta("skill_id", skill_id)
 
-	## Liens parent → enfant (courbes douces le long du pétale)
+	## Liens parent → enfant (courbes vers le haut / latérales = branches)
 	for sid in GameState.skill_ids():
 		var parents: Array = GameState.skill_prerequisites(sid)
 		if parents.is_empty():
@@ -5824,21 +5891,20 @@ func _build_skill_mindmap() -> Control:
 			var col := _skill_branch_color(branch)
 			var a: Vector2 = centers[pid]
 			var b: Vector2 = centers[sid]
-			var mid := (a + b) * 0.5
-			var outward := (mid - hub).normalized() * 22.0
-			mid += outward
+			## Point de contrôle : monte d'abord puis s'écarte (forme de branche)
+			var mid := Vector2(a.x * 0.35 + b.x * 0.65, (a.y + b.y) * 0.5)
 			var pts := PackedVector2Array([a, mid, b])
 			if parent_lv >= 1:
 				var glow := Line2D.new()
-				glow.width = 9.0
-				glow.default_color = Color(col.r, col.g, col.b, 0.16 if child_lv >= 1 else 0.08)
+				glow.width = 10.0
+				glow.default_color = Color(col.r, col.g, col.b, 0.18 if child_lv >= 1 else 0.08)
 				glow.antialiased = true
 				glow.begin_cap_mode = Line2D.LINE_CAP_ROUND
 				glow.end_cap_mode = Line2D.LINE_CAP_ROUND
 				glow.points = pts
 				link_host.add_child(glow)
 				var line := Line2D.new()
-				line.width = 3.6 if child_lv >= 1 else (2.8 if child_unlocked else 2.0)
+				line.width = 3.8 if child_lv >= 1 else (2.8 if child_unlocked else 2.0)
 				if child_lv >= 1:
 					line.default_color = Color(col.r, col.g, col.b, 0.95)
 				elif child_unlocked:
@@ -5853,7 +5919,7 @@ func _build_skill_mindmap() -> Control:
 			else:
 				var empty := Line2D.new()
 				empty.width = 1.8
-				empty.default_color = Color(0.45, 0.50, 0.40, 0.22)
+				empty.default_color = Color(0.40, 0.48, 0.42, 0.25)
 				empty.antialiased = true
 				empty.points = pts
 				link_host.add_child(empty)
@@ -6005,19 +6071,19 @@ func _mindmap_node(
 	cost_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if maxed:
 		cost_l.text = "MAX"
-		cost_l.add_theme_color_override("font_color", branch_col.darkened(0.15))
+		cost_l.add_theme_color_override("font_color", branch_col.lightened(0.25))
 	elif can:
 		cost_l.text = "%d PC" % cost
-		cost_l.add_theme_color_override("font_color", Color(0.72, 0.48, 0.08))
+		cost_l.add_theme_color_override("font_color", Color(1.0, 0.82, 0.35))
 	elif unlocked:
 		cost_l.text = "%d PC" % cost
-		cost_l.add_theme_color_override("font_color", Color(0.40, 0.42, 0.34))
+		cost_l.add_theme_color_override("font_color", Color(0.72, 0.78, 0.70))
 	elif not prestige_ok:
 		cost_l.text = "P%d" % GameState.skill_prestige_required(skill_id)
-		cost_l.add_theme_color_override("font_color", Color(0.55, 0.32, 0.28))
+		cost_l.add_theme_color_override("font_color", Color(0.90, 0.55, 0.48))
 	else:
 		cost_l.text = "%d PC" % cost
-		cost_l.add_theme_color_override("font_color", Color(0.55, 0.52, 0.48))
+		cost_l.add_theme_color_override("font_color", Color(0.55, 0.58, 0.52))
 	root.add_child(cost_l)
 
 	if can:

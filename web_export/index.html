@@ -286,7 +286,7 @@ html, body {
 	font: 700 13px/1 system-ui, sans-serif;
 }
 
-/* Paysage forcé en portrait : le JS pose taille + transform au pixel près */
+/* Shell = viewport (éventuellement tourné). #cei-game = cadre 16:9 letterboxé. */
 #cei-shell {
 	position: fixed;
 	inset: 0;
@@ -297,8 +297,14 @@ html, body {
 	transform-origin: top left;
 }
 
-#cei-shell #canvas,
-#cei-shell #status {
+#cei-game {
+	position: absolute;
+	overflow: hidden;
+	background: #1a1f1c;
+}
+
+#cei-game #canvas,
+#cei-game #status {
 	position: absolute;
 	inset: 0;
 	width: 100% !important;
@@ -323,6 +329,7 @@ body.cei-portrait {
 	<body>
 		<div id="cei-safe-probe" aria-hidden="true"></div>
 		<div id="cei-shell">
+		<div id="cei-game">
 		<canvas id="canvas">
 			Your browser does not support the canvas tag.
 		</canvas>
@@ -356,6 +363,7 @@ body.cei-portrait {
 			<progress id="status-progress"></progress>
 			<div id="status-notice"></div>
 		</div>
+		</div>
 
 		<div id="mobile-tip" role="dialog" aria-live="polite">
 			Pour un vrai plein écran (sans barre d’URL) : ajoute le jeu à l’écran d’accueil.
@@ -365,7 +373,7 @@ body.cei-portrait {
 
 		<script src="crops_express_idle.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":10601360,"crops_express_idle.wasm":39513091},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":10601792,"crops_express_idle.wasm":39513091},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 const engine = new Engine(GODOT_CONFIG);
 
@@ -377,10 +385,10 @@ window.ceiSafeInsets = function () {
 	let t = s ? (parseFloat(s.paddingTop) || 0) : 0;
 	let r = s ? (parseFloat(s.paddingRight) || 0) : 0;
 	let b = s ? (parseFloat(s.paddingBottom) || 0) : 0;
-	const shell = document.getElementById('cei-shell');
+	const game = document.getElementById('cei-game') || document.getElementById('cei-shell');
 	const portrait = document.body.classList.contains('cei-portrait');
-	const gameW = shell ? (shell.clientWidth || 1) : 1;
-	const gameH = shell ? (shell.clientHeight || 1) : 1;
+	const gameW = game ? (game.clientWidth || 1) : 1;
+	const gameH = game ? (game.clientHeight || 1) : 1;
 	if (portrait) {
 		/* translate(pw) rotate(90deg) : top physique → gauche jeu */
 		const tmp = l;
@@ -522,9 +530,31 @@ window.ceiSafeInsets = function () {
 		return s.h > s.w;
 	}
 
-	/** Remplit 100 % de l'écran : en portrait, shell paysage + rotation. */
+	/** Cadre jeu 16:9 « classique » (comme en vrai paysage), letterboxé. */
+	const GAME_ASPECT = 16 / 9;
+
+	function fitContain(availW, availH, aspect) {
+		let w;
+		let h;
+		if (availW / availH > aspect) {
+			h = availH;
+			w = Math.round(h * aspect);
+		} else {
+			w = availW;
+			h = Math.round(w / aspect);
+		}
+		return {
+			w: Math.max(1, w),
+			h: Math.max(1, h),
+			x: Math.round((availW - w) * 0.5),
+			y: Math.round((availH - h) * 0.5),
+		};
+	}
+
+	/** En portrait : shell tourné ; jeu letterboxé 16:9 (plus d'étirement ultra-large). */
 	function applyForcedLandscapeLayout() {
 		const shell = document.getElementById('cei-shell');
+		const game = document.getElementById('cei-game');
 		const canvas = document.getElementById('canvas');
 		const s = viewportSize();
 		const portrait = isPortrait();
@@ -545,21 +575,33 @@ window.ceiSafeInsets = function () {
 		shell.style.bottom = 'auto';
 		shell.style.margin = '0';
 		shell.style.zIndex = '1';
+		shell.style.background = '#1a1f1c';
+
+		let availW;
+		let availH;
 		if (portrait) {
-			/* Cadre logique paysage = (hauteur physique × largeur physique) */
-			shell.style.width = s.h + 'px';
-			shell.style.height = s.w + 'px';
-			/*
-			 * rotate(90deg) autour du coin haut-gauche place le cadre à gauche hors écran ;
-			 * translateX(+largeur physique) le ramène pile sur le viewport.
-			 */
+			/* Viewport logique paysage après rotation = (h × w) physiques */
+			availW = s.h;
+			availH = s.w;
+			shell.style.width = availW + 'px';
+			shell.style.height = availH + 'px';
 			shell.style.transformOrigin = 'top left';
 			shell.style.transform = 'translate(' + s.w + 'px, 0px) rotate(90deg)';
 		} else {
-			shell.style.width = s.w + 'px';
-			shell.style.height = s.h + 'px';
+			availW = s.w;
+			availH = s.h;
+			shell.style.width = availW + 'px';
+			shell.style.height = availH + 'px';
 			shell.style.transformOrigin = 'top left';
 			shell.style.transform = 'none';
+		}
+
+		const box = fitContain(availW, availH, GAME_ASPECT);
+		if (game) {
+			game.style.left = box.x + 'px';
+			game.style.top = box.y + 'px';
+			game.style.width = box.w + 'px';
+			game.style.height = box.h + 'px';
 		}
 		if (canvas) {
 			canvas.style.width = '100%';
