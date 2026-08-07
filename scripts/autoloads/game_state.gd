@@ -83,7 +83,6 @@ const COMBO_COOLDOWN_FAST := 90.0
 const COMBO_OVERFLOW_PER_HIT := 3.0
 const COMBO_OVERFLOW_CAP := 15.0
 const MONEY_START_BONUS := 50
-const FREE_REFUSE_PER_RUN := 1
 ## Tuto : 0 actif · 3 terminé (étapes fines dérivées de l'état)
 const TUTORIAL_ACTIVE := 0
 const TUTORIAL_SELL := 1
@@ -129,8 +128,6 @@ var _fert_cover: PackedFloat32Array = PackedFloat32Array()
 ## Compétences (arbre XP) — reset au prestige ; niveau 0 = non acquis
 var skills_owned: Dictionary = {}
 var combo_overflow_gained: float = 0.0
-var free_refuses_left: int = 0
-var prestige_keep_pc: bool = false
 
 ## Reliques permanentes — id → niveau (1…RELIC_MAX_LEVEL)
 var relic_levels: Dictionary = {}
@@ -179,21 +176,27 @@ const _CLIENT_NAMES := [
 
 const _SKILL_ORDER := [
 	"root_hub",
+	"farm_yield", "click_zone_wide",
 	"combo_flash", "combo_frenzy_power", "combo_frenzy_window", "combo_frenzy_duration",
 	"combo_cd", "combo_chain",
-	"xp_mission", "xp_curve", "xp_mission_2", "xp_prestige_prep",
-	"order_time", "order_flow", "order_slots", "order_refuse",
-	"money_mission", "money_shop", "money_crit", "money_start",
-	"atelier_gears", "atelier_long_arms", "atelier_wide_tour", "atelier_live_chain", "atelier_network",
+	"xp_mission", "xp_curve", "xp_mission_2",
+	"order_time", "order_flow", "order_slots",
+	"money_mission", "money_shop", "money_crit", "money_start", "money_sell",
+	## Boutique / machines — loin dans l'arbre, à partir de P2
+	"boutique_land", "boutique_tools",
+	"atelier_gears", "atelier_long_arms", "atelier_drone_speed",
+	"atelier_wide_reach", "atelier_live_chain", "atelier_extra_arms",
+	"atelier_network", "atelier_courier",
 ]
 
 const _SKILL_BRANCH_LABELS := {
-	"combo": "Rythme & Burst",
-	"xp": "Course au Prestige",
-	"orders": "Logisticien",
-	"money": "Marchand",
-	"atelier": "Machines",
-	"trunk": "Tronc",
+	"combo": "Boost",
+	"xp": "Expérience",
+	"orders": "Clients",
+	"money": "Or",
+	"boutique": "Boutique",
+	"atelier": "Boutique",
+	"trunk": "Clics",
 }
 
 ## Palier par niveau (index 0 = niv. 1)
@@ -213,151 +216,224 @@ const _MONEY_SHOP_MULT := [0.97, 0.95, 0.92]
 const _MONEY_CRIT_CHANCE := [0.08, 0.12, 0.16]
 const _ATELIER_GEARS_MULT := [0.96, 0.92, 0.88]
 const _ATELIER_GARDENER_INTERVAL := [1.8, 1.6, 1.4]
+const _BOUTIQUE_LAND_MULT := [0.95, 0.90, 0.85]
+const _BOUTIQUE_TOOLS_MULT := [0.95, 0.90, 0.85]
+const _FARM_YIELD_BONUS := [0.05, 0.08, 0.12]
+const _SELL_GOLD_BONUS := [0.10, 0.15, 0.20]
+const _DELIVERY_AUTO_GOLD := [1.10, 1.20, 1.30]
+const _DELIVERY_COST_MULT := [0.85, 0.70, 0.55]
+const _FERT_SALVO_INTERVAL := [1.70, 1.40, 1.10]
 
 const _SKILL_DEFS := {
 	"root_hub": {
-		"title": "Main verte", "short": "Splash",
-		"desc": "Clic : salve sur les 8 voisins. +25 % / niv de la puissance de clic (max 100 %).",
+		"title": "Clics en zone", "short": "Zone",
+		"desc": "Chaque clic propage sur les plantes d'à côté les faisant pousser plus vite.",
+		"next": ["+25 %", "+25 %", "+25 %", "+25 %"],
 		"cost": 1, "costs": [1, 1, 2, 2], "max_level": 4,
-		"icon": "ui_click_hand", "parent": "", "branch": "trunk", "hub": true,
+		"icon": "ui_click_hand", "parent": "", "branch": "trunk", "ray_root": true,
+	},
+	"farm_yield": {
+		"title": "Récolte abondante", "short": "Récolte",
+		"desc": "Chance de récolter le double à chaque récolte.",
+		"next": ["+5 % double", "+8 % double", "+12 % double"],
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_shop_frenzy", "parent": "root_hub", "branch": "trunk",
+	},
+	"click_zone_wide": {
+		"title": "Zone élargie", "short": "Large",
+		"desc": "Le clic touche les plantes plus loin autour.",
+		"next": ["Rayon 2", "+15 % force zone"],
+		"cost": 2, "costs": [2, 3], "max_level": 2,
+		"icon": "ui_target", "parent": "root_hub", "branch": "trunk",
 	},
 	"combo_flash": {
-		"title": "Combo Flash", "short": "Flash",
-		"desc": "Seuil Frénésie : 4→3, puis 3→2, puis 2→1 livraisons.",
-		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
-		"icon": "ui_combo", "parent": "root_hub", "branch": "combo",
+		"title": "Combo rapide", "short": "Flash",
+		"desc": "Le boost de pousse se déclenche plus tôt.",
+		"next": ["Boost après 3 livraisons", "Boost après 2 livraisons", "Boost après 1 livraison"],
+		"cost": 1, "costs": [1, 2, 3], "max_level": 3,
+		"icon": "ui_combo", "parent": "", "branch": "combo", "ray_root": true,
 	},
 	"combo_frenzy_power": {
-		"title": "Frénésie — Puissance", "short": "Puissance",
-		"desc": "Vitesse de pousse pendant le boost : ×2,3 → ×2,6 → ×3,0.",
+		"title": "Boost de pousse", "short": "Puissance",
+		"desc": "Pendant le boost, les plantes poussent plus vite.",
+		"next": ["Pousse ×2,3", "Pousse ×2,6", "Pousse ×3,0"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_shop_speed", "parent": "combo_flash", "branch": "combo",
 	},
 	"combo_frenzy_window": {
-		"title": "Frénésie — Fenêtre", "short": "Fenêtre",
-		"desc": "Temps pour enchaîner les livraisons : 12 → 14 → 16 s.",
+		"title": "Temps combo", "short": "Fenêtre",
+		"desc": "Plus de temps pour enchaîner les livraisons.",
+		"next": ["Fenêtre 12 s", "Fenêtre 14 s", "Fenêtre 16 s"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_chrono", "parent": "combo_flash", "branch": "combo",
 	},
 	"combo_frenzy_duration": {
-		"title": "Frénésie — Durée", "short": "Durée",
-		"desc": "Durée du boost actif : 35 → 40 → 45 s.",
+		"title": "Durée du boost", "short": "Durée",
+		"desc": "Le boost de pousse dure plus longtemps.",
+		"next": ["Durée 35 s", "Durée 40 s", "Durée 45 s"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_hourglass", "parent": "combo_flash", "branch": "combo",
 	},
 	"combo_cd": {
 		"title": "Relance rapide", "short": "Relance",
-		"desc": "Cooldown après boost : 105 → 95 → 85 → 75 s.",
+		"desc": "Moins d'attente entre deux boosts.",
+		"next": ["Attente 95 s", "Attente 85 s", "Attente 75 s"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_chrono", "parent": "combo_flash", "branch": "combo",
 	},
 	"combo_chain": {
 		"title": "Enchaînement", "short": "Enchaîne",
-		"desc": "Pendant le boost : +1 / +2 / +3 s par livraison (cap +5 / +10 / +15 s).",
+		"desc": "Chaque livraison prolonge le boost en cours.",
+		"next": ["+1 s / livraison (max +5 s)", "+2 s / livraison (max +10 s)", "+3 s / livraison (max +15 s)"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_combo", "parent": "combo_flash", "branch": "combo",
 	},
 	"xp_mission": {
 		"title": "Savoir maraîcher", "short": "Savoir",
-		"desc": "XP livraisons : +10 % → +15 % → +20 %.",
-		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
-		"icon": "ui_xp", "parent": "root_hub", "branch": "xp",
+		"desc": "Plus d'XP à chaque livraison.",
+		"next": ["+10 % XP", "+15 % XP", "+20 % XP"],
+		"cost": 1, "costs": [1, 2, 3], "max_level": 3,
+		"icon": "ui_xp", "parent": "", "branch": "xp", "ray_root": true,
 	},
 	"xp_curve": {
 		"title": "Apprentissage", "short": "Courbe",
-		"desc": "XP requise : −5 % → −10 % → −15 %.",
+		"desc": "Moins d'XP nécessaire pour monter de niveau.",
+		"next": ["−5 % XP requise", "−10 % XP requise", "−15 % XP requise"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_xp", "parent": "xp_mission", "branch": "xp",
 	},
 	"xp_mission_2": {
 		"title": "Grand savoir", "short": "Grand",
-		"desc": "XP livraisons (stack) : +10 % → +15 % → +20 %.",
+		"desc": "Encore plus d'XP sur les livraisons.",
+		"next": ["+10 % XP", "+15 % XP", "+20 % XP"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_xp", "parent": "xp_mission", "branch": "xp",
 	},
-	"xp_prestige_prep": {
-		"title": "Ambition", "short": "Ambition",
-		"desc": "Capstone XP : au prestige, conserve 1 PC pour ta prochaine spé.",
-		"cost": 3, "max_level": 1,
-		"icon": "ui_coin_prestige", "parent": "xp_mission", "branch": "xp",
-	},
 	"order_time": {
 		"title": "Clients patients", "short": "Patients",
-		"desc": "Durée commandes : +10 % → +20 % → +30 %.",
-		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
-		"icon": "ui_chrono", "parent": "root_hub", "branch": "orders",
+		"desc": "Les commandes durent plus longtemps.",
+		"next": ["+10 % durée", "+20 % durée", "+30 % durée"],
+		"cost": 1, "costs": [1, 2, 3], "max_level": 3,
+		"icon": "ui_chrono", "parent": "", "branch": "orders", "ray_root": true,
 	},
 	"order_flow": {
 		"title": "Bouche à oreille", "short": "Flux",
-		"desc": "Refresh commandes : −8 % → −17 % → −25 %.",
+		"desc": "De nouvelles commandes arrivent plus vite.",
+		"next": ["−8 % délai", "−17 % délai", "−25 % délai"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_truck", "parent": "order_time", "branch": "orders",
 	},
 	"order_slots": {
 		"title": "Carnet rempli", "short": "Carnet",
-		"desc": "+1 commande active max.",
+		"desc": "Une commande active de plus en même temps.",
+		"next": ["+1 commande"],
 		"cost": 2, "max_level": 1,
 		"icon": "ui_mission", "parent": "order_time", "branch": "orders",
 	},
-	"order_refuse": {
-		"title": "File sélective", "short": "Refus",
-		"desc": "1 refus / run sans long refresh.",
-		"cost": 1, "max_level": 1,
-		"icon": "ui_btn_cancel", "parent": "order_time", "branch": "orders",
-	},
 	"money_mission": {
 		"title": "Négociant", "short": "Négocé",
-		"desc": "Or livraisons : +10 % → +15 % → +20 %.",
-		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
-		"icon": "ui_shop_money", "parent": "root_hub", "branch": "money",
+		"desc": "Plus d'or à chaque livraison.",
+		"next": ["+10 % or", "+15 % or", "+20 % or"],
+		"cost": 1, "costs": [1, 2, 3], "max_level": 3,
+		"icon": "ui_shop_money", "parent": "", "branch": "money", "ray_root": true,
 	},
 	"money_shop": {
 		"title": "Soldeur", "short": "Soldeur",
-		"desc": "Coûts boutique : −3 % → −5 % → −8 %.",
+		"desc": "Prix réduits à la boutique.",
+		"next": ["−3 % coûts", "−5 % coûts", "−8 % coûts"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_tab_shop", "parent": "money_mission", "branch": "money",
 	},
 	"money_crit": {
 		"title": "Pourboire", "short": "Pourboire",
-		"desc": "Chance double or : 8 % → 12 % → 16 %.",
+		"desc": "Chance de doubler l'or d'une livraison.",
+		"next": ["8 % de chance", "12 % de chance", "16 % de chance"],
 		"cost": 3, "costs": [3, 3, 4], "max_level": 3,
 		"icon": "ui_sparkle", "parent": "money_mission", "branch": "money",
 	},
 	"money_start": {
 		"title": "Caisse de départ", "short": "Départ",
-		"desc": "+50 or immédiatement à l\u2019achat.",
+		"desc": "Or reçu immédiatement à l'achat.",
+		"next": ["+50 or"],
 		"cost": 2, "max_level": 1,
 		"icon": "ui_coin", "parent": "money_mission", "branch": "money",
 	},
+	"money_sell": {
+		"title": "Vente directe", "short": "Vente",
+		"desc": "Plus d'or en vendant depuis le stock.",
+		"next": ["+10 % or vente", "+15 % or vente", "+20 % or vente"],
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3,
+		"icon": "ui_coin", "parent": "money_mission", "branch": "money",
+	},
+	"boutique_land": {
+		"title": "Parcelles soldées", "short": "Parcelles",
+		"desc": "Jetons de terre moins chers. Prestige 2.",
+		"next": ["−5 % coût terre", "−10 % coût terre", "−15 % coût terre"],
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
+		"icon": "ui_shop_plot", "parent": "money_shop", "branch": "boutique",
+	},
+	"boutique_tools": {
+		"title": "Outils soldés", "short": "Outils",
+		"desc": "Boosts Vitesse / Clic moins chers. Prestige 2.",
+		"next": ["−5 % coût boosts", "−10 % coût boosts", "−15 % coût boosts"],
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
+		"icon": "ui_shop_click", "parent": "money_shop", "branch": "boutique",
+	},
 	"atelier_gears": {
 		"title": "Rouages", "short": "Rouages",
-		"desc": "Coûts machines : −4 % → −8 % → −12 %. Requiert P1.",
-		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 1,
-		"icon": "ui_gardener", "parent": "root_hub", "branch": "atelier",
+		"desc": "Machines moins chères. Prestige 2.",
+		"next": ["−4 % coût machines", "−8 % coût machines", "−12 % coût machines"],
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
+		"icon": "ui_gardener", "parent": "money_shop", "branch": "boutique",
 	},
 	"atelier_long_arms": {
 		"title": "Bras longs", "short": "Bras",
-		"desc": "Portée fertiliseurs +1 / niv (max +3). Requiert P1.",
-		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 1,
-		"icon": "ui_fertilizer", "parent": "atelier_gears", "branch": "atelier",
+		"desc": "Fertiliseurs touchent plus de cases. Prestige 2.",
+		"next": ["+1 portée", "+1 portée", "+1 portée"],
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
+		"icon": "ui_fertilizer", "parent": "atelier_gears", "branch": "boutique",
 	},
-	"atelier_wide_tour": {
+	"atelier_drone_speed": {
+		"title": "Drone pressé", "short": "Drone",
+		"desc": "Fertiliseurs tirent plus souvent. Prestige 2.",
+		"next": ["Salve 1,7 s", "Salve 1,4 s", "Salve 1,1 s"],
+		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
+		"icon": "ui_fertilizer", "parent": "atelier_long_arms", "branch": "boutique",
+	},
+	"atelier_wide_reach": {
 		"title": "Tournée large", "short": "Tournée",
-		"desc": "Portée jardiniers +1 / niv (max +3). Requiert P3.",
+		"desc": "Jardiniers touchent plus de cases. Prestige 3.",
+		"next": ["+1 portée", "+1 portée", "+1 portée"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 3,
-		"icon": "ui_auto_harvester", "parent": "atelier_gears", "branch": "atelier",
+		"icon": "ui_auto_harvester", "parent": "atelier_gears", "branch": "boutique",
 	},
 	"atelier_live_chain": {
 		"title": "Chaîne vive", "short": "Chaîne",
-		"desc": "Délai jardinier : 1,8 s → 1,6 s → 1,4 s. Requiert P3.",
+		"desc": "Jardiniers plus rapides. Prestige 3.",
+		"next": ["Délai 1,8 s", "Délai 1,6 s", "Délai 1,4 s"],
 		"cost": 2, "costs": [2, 2, 3], "max_level": 3, "prestige_req": 3,
-		"icon": "ui_chrono", "parent": "atelier_gears", "branch": "atelier",
+		"icon": "ui_chrono", "parent": "atelier_gears", "branch": "boutique",
+	},
+	"atelier_extra_arms": {
+		"title": "Bras du jardinier", "short": "Multi",
+		"desc": "Chaque jardinier agit plusieurs fois par cycle. Prestige 3.",
+		"next": ["2 actions / cycle", "3 actions / cycle"],
+		"cost": 2, "costs": [2, 3], "max_level": 2, "prestige_req": 3,
+		"icon": "ui_gardener", "parent": "atelier_live_chain", "branch": "boutique",
 	},
 	"atelier_network": {
 		"title": "Réseau", "short": "Réseau",
-		"desc": "Capstone : +1 portée fertiliseurs et jardiniers. Requiert P5.",
+		"desc": "+1 portée fertiliseurs et jardiniers. Prestige 5.",
+		"next": ["+1 portée partout"],
 		"cost": 3, "max_level": 1, "prestige_req": 5,
-		"icon": "ui_auto_delivery", "parent": "atelier_gears", "branch": "atelier",
+		"icon": "ui_auto_delivery", "parent": "atelier_gears", "branch": "boutique",
+	},
+	"atelier_courier": {
+		"title": "Livreur agile", "short": "Livreur",
+		"desc": "Livreur auto plus rentable et moins cher. Prestige 5.",
+		"next": ["Or auto +10 %, coût −15 %", "Or auto +20 %, coût −30 %", "Or auto +30 %, coût −45 %"],
+		"cost": 2, "costs": [2, 3, 3], "max_level": 3, "prestige_req": 5,
+		"icon": "ui_truck", "parent": "atelier_network", "branch": "boutique",
 	},
 }
 
@@ -516,8 +592,7 @@ func _reset_run(from_prestige: bool) -> void:
 	money = 40 if not from_prestige else 0
 	xp = 0
 	player_level = 1
-	skill_points = 1 if prestige_keep_pc else 0
-	prestige_keep_pc = false
+	skill_points = 0
 	skill_points_spent = 0
 	speed_level = 0
 	click_level = 0
@@ -529,7 +604,6 @@ func _reset_run(from_prestige: bool) -> void:
 	_gardener_next_global = 0.0
 	skills_owned.clear()
 	combo_overflow_gained = 0.0
-	free_refuses_left = 0
 	xp_required = _xp_for_player_level(1)
 	selected_crop_index = 0
 	_clamp_selected_crop()
@@ -953,20 +1027,30 @@ func click_splash_level() -> int:
 
 
 func click_splash_ratio() -> float:
-	## Fraction de la puissance de clic appliquée aux voisins (Chebyshev 1).
+	## Fraction de la puissance de clic appliquée aux voisins (Chebyshev).
 	var lvl := click_splash_level()
 	if lvl <= 0:
 		return 0.0
-	return clampf(0.25 * float(lvl), 0.0, 1.0)
+	var ratio := clampf(0.25 * float(lvl), 0.0, 1.0)
+	if get_skill_level("click_zone_wide") >= 2:
+		ratio = minf(1.0, ratio + 0.15)
+	return ratio
+
+
+func click_splash_radius() -> int:
+	return 2 if has_skill("click_zone_wide") else 1
 
 
 func adjacent_plot_indices(index: int) -> Array[int]:
-	## 8 cases autour (distance Chebyshev = 1).
+	## Cases dans le rayon splash (Chebyshev).
 	var out: Array[int] = []
+	var r := click_splash_radius()
 	var rc := index_to_rc(index)
-	for dy in range(-1, 2):
-		for dx in range(-1, 2):
+	for dy in range(-r, r + 1):
+		for dx in range(-r, r + 1):
 			if dx == 0 and dy == 0:
+				continue
+			if maxi(absi(dx), absi(dy)) > r:
 				continue
 			var ni := rc_to_index(rc.x + dx, rc.y + dy)
 			if ni >= 0:
@@ -1054,9 +1138,26 @@ func shop_cost_mult() -> float:
 	return m
 
 
+func boutique_land_mult() -> float:
+	var lv := get_skill_level("boutique_land")
+	if lv <= 0:
+		return 1.0
+	return _BOUTIQUE_LAND_MULT[mini(lv, _BOUTIQUE_LAND_MULT.size()) - 1]
+
+
+func boutique_tools_mult() -> float:
+	var lv := get_skill_level("boutique_tools")
+	if lv <= 0:
+		return 1.0
+	return _BOUTIQUE_TOOLS_MULT[mini(lv, _BOUTIQUE_TOOLS_MULT.size()) - 1]
+
+
 func double_drop_chance() -> float:
 	var c := float(yield_level) * DOUBLE_DROP_PER_LEVEL
 	c += 0.03 * float(get_relic_level("bountiful"))
+	var ylv := get_skill_level("farm_yield")
+	if ylv > 0:
+		c += _FARM_YIELD_BONUS[mini(ylv, _FARM_YIELD_BONUS.size()) - 1]
 	return minf(1.0, c)
 
 
@@ -1123,11 +1224,18 @@ func unit_sell_price(crop_id: StringName) -> int:
 	return maxi(1, crop.base_sell)
 
 
+func sell_gold_mult() -> float:
+	var lv := get_skill_level("money_sell")
+	if lv <= 0:
+		return 1.0
+	return 1.0 + _SELL_GOLD_BONUS[mini(lv, _SELL_GOLD_BONUS.size()) - 1]
+
+
 func preview_sell_gold(crop_id: StringName, amount: int) -> int:
 	var base := unit_sell_price(crop_id) * maxi(0, amount)
 	if base <= 0:
 		return 0
-	return maxi(1, int(round(float(base) * prestige_points_mult())))
+	return maxi(1, int(round(float(base) * prestige_points_mult() * sell_gold_mult())))
 
 
 func sell_quick_amounts(stock_amt: int) -> Array[int]:
@@ -1160,7 +1268,7 @@ func sell_crop_amount(crop_id: StringName, amount: int) -> int:
 	if not remove_stock(crop_id, amount):
 		return 0
 	var gold := amount * unit_sell_price(crop_id)
-	gold = maxi(1, int(round(float(gold) * prestige_points_mult())))
+	gold = maxi(1, int(round(float(gold) * prestige_points_mult() * sell_gold_mult())))
 	add_money(gold)
 	_track_stat("sold_items", amount)
 	_track_stat("gold_sold", gold)
@@ -1290,7 +1398,10 @@ func fertilizer_salvo_range() -> int:
 
 
 func fertilizer_salvo_interval() -> float:
-	return FERTILIZER_SALVO_INTERVAL
+	var lv := get_skill_level("atelier_drone_speed")
+	if lv <= 0:
+		return FERTILIZER_SALVO_INTERVAL
+	return _FERT_SALVO_INTERVAL[mini(lv, _FERT_SALVO_INTERVAL.size()) - 1]
 
 
 func fertilizer_salvo_seconds() -> float:
@@ -1419,8 +1530,8 @@ func gardener_interval() -> float:
 
 
 func gardener_arms() -> int:
-	## Nombre d’actions (récolte+replante) par tick. Upgrade multi-bras plus tard.
-	return GARDENER_ARMS_BASE
+	## Nombre d’actions (récolte+replante) par tick.
+	return GARDENER_ARMS_BASE + get_skill_level("atelier_extra_arms")
 
 
 func machine_shop_cost_mult() -> float:
@@ -1487,7 +1598,7 @@ func range_overlay_flags(index: int) -> Dictionary:
 	return flags
 
 
-func try_deliver_order(order_id: String, silent: bool = false, emit_missions: bool = true) -> bool:
+func try_deliver_order(order_id: String, silent: bool = false, emit_missions: bool = true, from_auto: bool = false) -> bool:
 	for m in missions:
 		if m.id != order_id:
 			continue
@@ -1501,7 +1612,7 @@ func try_deliver_order(order_id: String, silent: bool = false, emit_missions: bo
 				if not silent:
 					toast.emit("Erreur inventaire.")
 				return false
-		_claim_order(m, silent, emit_missions)
+		_claim_order(m, silent, emit_missions, from_auto)
 		return true
 	return false
 
@@ -1524,13 +1635,8 @@ func cancel_order(order_id: String) -> bool:
 			return false
 		var slot := m.board_slot
 		missions.remove_at(i)
-		if free_refuses_left > 0:
-			free_refuses_left -= 1
-			toast.emit("Refus gratuit — prochaine commande bientôt.")
-			_refill_orders()
-		else:
-			_queue_order_refresh("refused", slot)
-			toast.emit("Commande refusee — prochaine dans %ds." % int(order_refresh_sec()))
+		_queue_order_refresh("refused", slot)
+		toast.emit("Commande refusee — prochaine dans %ds." % int(order_refresh_sec()))
 		missions_changed.emit()
 		return true
 	return false
@@ -1564,9 +1670,11 @@ func _tick_order_refresh(delta: float) -> void:
 		missions_changed.emit()
 
 
-func _claim_order(m: MissionData, silent: bool = false, emit_missions: bool = true) -> void:
+func _claim_order(m: MissionData, silent: bool = false, emit_missions: bool = true, from_auto: bool = false) -> void:
 	var money_gain := maxi(1, int(m.coin_reward * mission_money_mult()))
 	var xp_gain := maxi(1, int(m.xp_reward * mission_xp_mult()))
+	if from_auto:
+		money_gain = maxi(1, int(round(float(money_gain) * delivery_auto_gold_mult())))
 	var tip := false
 	var mc := get_skill_level("money_crit")
 	if mc > 0:
@@ -1769,7 +1877,7 @@ func _tick_auto_delivery() -> void:
 		return
 	var n := 0
 	for oid in ids:
-		if try_deliver_order(oid, true):
+		if try_deliver_order(oid, true, true, true):
 			n += 1
 	if n > 0:
 		toast.emit("Livreur auto : %d commande%s livrée%s." % [n, "s" if n > 1 else "", "s" if n > 1 else ""])
@@ -2087,7 +2195,24 @@ func get_machine_cost(machine_id: String) -> int:
 			base = DELIVERY_COST
 		_:
 			return 0
-	return maxi(1, int(ceil(float(base) * machine_shop_cost_mult())))
+	var mult := machine_shop_cost_mult()
+	if machine_id == "delivery":
+		mult *= delivery_cost_mult()
+	return maxi(1, int(ceil(float(base) * mult)))
+
+
+func delivery_cost_mult() -> float:
+	var lv := get_skill_level("atelier_courier")
+	if lv <= 0:
+		return 1.0
+	return _DELIVERY_COST_MULT[mini(lv, _DELIVERY_COST_MULT.size()) - 1]
+
+
+func delivery_auto_gold_mult() -> float:
+	var lv := get_skill_level("atelier_courier")
+	if lv <= 0:
+		return 1.0
+	return _DELIVERY_AUTO_GOLD[mini(lv, _DELIVERY_AUTO_GOLD.size()) - 1]
 
 
 func can_buy_machine(machine_id: String) -> bool:
@@ -2133,7 +2258,12 @@ func buy_machine(machine_id: String) -> bool:
 
 
 func get_boost_cost(boost_id: String) -> int:
-	return maxi(1, int(ceil(float(_boost_costs.get(boost_id, 9999)) * shop_cost_mult())))
+	var m := shop_cost_mult()
+	if boost_id == "plot":
+		m *= boutique_land_mult()
+	elif boost_id == "click" or boost_id == "speed":
+		m *= boutique_tools_mult()
+	return maxi(1, int(ceil(float(_boost_costs.get(boost_id, 9999)) * m)))
 
 
 func _sync_plot_boost_cost() -> void:
@@ -2187,6 +2317,18 @@ func skill_children(parent_id: String) -> Array:
 
 func skill_branch_label(branch: String) -> String:
 	return str(_SKILL_BRANCH_LABELS.get(branch, branch))
+
+
+func skill_next_level_text(skill_id: String) -> String:
+	## Libellé court du prochain palier (vide si max).
+	if is_skill_maxed(skill_id):
+		return ""
+	var def := get_skill_def(skill_id)
+	var nexts: Array = def.get("next", [])
+	var lv := get_skill_level(skill_id)
+	if lv < 0 or lv >= nexts.size():
+		return ""
+	return str(nexts[lv])
 
 
 func get_skill_level(skill_id: String) -> int:
@@ -2308,8 +2450,6 @@ func _apply_skill_purchase(skill_id: String) -> void:
 		"money_start":
 			add_money(MONEY_START_BONUS)
 			toast.emit("+%d or de caisse !" % MONEY_START_BONUS)
-		"order_refuse":
-			free_refuses_left = FREE_REFUSE_PER_RUN
 		"order_slots":
 			_refill_orders()
 			missions_changed.emit()
@@ -2466,7 +2606,6 @@ func do_prestige_with_relic(relic_id: String) -> bool:
 		toast.emit("Relique invalide.")
 		return false
 	var points := calc_prestige_points_gain()
-	prestige_keep_pc = has_skill("xp_prestige_prep")
 	prestige_points += points
 	prestige_level += 1
 	var granted := false
@@ -2491,7 +2630,6 @@ func hard_reset_game() -> void:
 	prestige_level = 0
 	prestige_points = 0
 	relic_levels.clear()
-	prestige_keep_pc = false
 	tutorial_step = TUTORIAL_ACTIVE
 	tutorial_grow_seen = false
 	terrain_edit_seen = false
@@ -3423,7 +3561,6 @@ func save_game() -> void:
 		"skill_tree_intro_seen": skill_tree_intro_seen,
 		"relics_intro_seen": relics_intro_seen,
 		"skills_owned": skills_owned.duplicate(),
-		"free_refuses_left": free_refuses_left,
 		"combo_overflow_gained": combo_overflow_gained,
 		"relic_levels": relic_levels.duplicate(),
 		"selected_crop_index": selected_crop_index,
@@ -3493,9 +3630,6 @@ func load_game() -> bool:
 	_load_skills_from_save(data)
 	## Toujours recalculer depuis la formule (courbe peut changer entre versions).
 	xp_required = _xp_for_player_level(player_level)
-	free_refuses_left = int(data.get("free_refuses_left", 0))
-	if has_skill("order_refuse") and free_refuses_left <= 0 and not data.has("free_refuses_left"):
-		free_refuses_left = FREE_REFUSE_PER_RUN
 	combo_overflow_gained = float(data.get("combo_overflow_gained", 0.0))
 	relic_levels.clear()
 	var saved_relics = data.get("relic_levels", {})
