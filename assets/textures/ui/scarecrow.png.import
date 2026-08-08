@@ -2,8 +2,8 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cscarecrowtut01"
-path="res://.godot/imported/scarecrow.png-a1b2c3d4e5f60718293a4b5c6d7e8f90.ctex"
+uid="uid://ixkr1u8bsbd5"
+path="res://.godot/imported/scarecrow.png-3b916e15fe12272cb49365a6d4b1432b.ctex"
 metadata={
 "vram_texture": false
 }
@@ -11,7 +11,7 @@ metadata={
 [deps]
 
 source_file="res://assets/textures/ui/scarecrow.png"
-dest_files=["res://.godot/imported/scarecrow.png-a1b2c3d4e5f60718293a4b5c6d7e8f90.ctex"]
+dest_files=["res://.godot/imported/scarecrow.png-3b916e15fe12272cb49365a6d4b1432b.ctex"]
 
 [params]
 
