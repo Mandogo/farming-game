@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "web_export/**"
+      - "tools/patch_web_sw.py"
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
 
@@ -27,6 +28,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Patch PWA service worker + stamp deploy id
+        run: |
+          set -euo pipefail
+          python3 tools/patch_web_sw.py
+          # Garantit index = HTML principal (même SW / même CEI_DEPLOY_ID)
+          cp -f web_export/crops_express_idle.html web_export/index.html
+          grep -q "skipWaiting" web_export/crops_express_idle.service.worker.js
+          grep -q "CEI_DEPLOY_ID" web_export/crops_express_idle.html
+          echo "PWA patch OK"
+
       - name: Prepare site from web_export/
         run: |
           set -euo pipefail
@@ -40,6 +51,9 @@ jobs:
             echo "::error::web_export/index.html manquant"
             exit 1
           fi
+          # Aide au debug deploy : id visible dans les logs
+          grep -o "CEI_DEPLOY_ID = '[^']*'" _site/index.html || true
+          grep -o "CACHE_VERSION = '[^']*'" _site/crops_express_idle.service.worker.js || true
           ls -lah _site
           du -sh _site
 
