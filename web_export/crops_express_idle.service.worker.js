@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1786205281|98a7540ae1b2';
+const CACHE_VERSION = '1786205506|7c77cd3c472e';
 /** @type {string} */
 const CACHE_PREFIX = 'Crops Express Id-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -37,9 +37,10 @@ self.addEventListener('activate', (event) => {
 	}).then(function () {
 		return self.clients.claim();
 	}).then(function () {
-		// Force les PWA / onglets déjà ouverts à recharger (HTML neuf).
+		// iOS PWA : navigate() est souvent ignoré → postMessage + reload côté page.
 		return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (all) {
 			return Promise.all(all.map(function (c) {
+				try { c.postMessage({ type: 'cei-reload', v: CACHE_VERSION }); } catch (e1) {}
 				try { return c.navigate(c.url); } catch (e) { return undefined; }
 			}));
 		});
@@ -114,7 +115,21 @@ self.addEventListener(
 		})();
 		const isHtmlOrJs = /\.(html|js)$/i.test(pathName) || pathName === '' || pathName === 'index.html';
 		const isHeavyAsset = /\.(wasm|pck)$/i.test(pathName);
+		const isVersionProbe = pathName === 'cei-version.json';
+		const isSwFile = /service\.worker\.js$/i.test(pathName);
 		const isCacheable = FULL_CACHE.some((v) => v === local || v === pathName) || (base === referrer && base.endsWith(CACHED_FILES[0]));
+
+		// Version + SW : jamais depuis Cache API (sinon PWA iOS reste coincée).
+		if (isVersionProbe || isSwFile) {
+			event.respondWith((async () => {
+				let response = await fetch(event.request, { cache: 'no-store' });
+				if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
+					response = ensureCrossOriginIsolationHeaders(response);
+				}
+				return response;
+			})());
+			return;
+		}
 
 		// Navigations + HTML/JS : network-first (évite HTML neuf + JS/WASM vieux).
 		if (isNavigate || isHtmlOrJs) {
