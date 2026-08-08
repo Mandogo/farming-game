@@ -4134,7 +4134,7 @@ func _on_seed_picked(i: int) -> void:
 	if not GameState.is_tutorial_done():
 		var need_id := GameState.tutorial_next_crop_id()
 		if need_id != &"" and GameState.crops[i].id != need_id:
-			_show_toast("Tuto - choisis %s" % GameState.crop_display_name(need_id))
+			_show_toast("Tuto - Graine %s" % GameState.crop_display_name(need_id))
 			return
 	if GameState.selected_crop_index != i:
 		Sfx.ui_click()
@@ -5042,7 +5042,7 @@ func _open_sell_modal(crop_id: StringName) -> void:
 		_show_toast("Termine le tutoriel avant de vendre.")
 		return
 	if GameState.is_tutorial_sell_step() and crop_id != GameState.TUTORIAL_SELL_CROP:
-		_show_toast("Tuto - Vends le poivron offert.")
+		_show_toast("Tuto - Stock → vendre")
 		return
 	if is_instance_valid(_active_sell_modal):
 		_active_sell_modal.dismiss()
