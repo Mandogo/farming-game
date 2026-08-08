@@ -25,6 +25,7 @@ WEB = ROOT / "web_export"
 SW_PATH = WEB / "crops_express_idle.service.worker.js"
 HTML_MAIN = WEB / "crops_express_idle.html"
 HTML_INDEX = WEB / "index.html"
+JS_PATH = WEB / "crops_express_idle.js"
 
 
 def _file_token(*names: str) -> str:
@@ -357,7 +358,51 @@ def _write_version_json(deploy_id: str) -> None:
 	print(f"Wrote {path.name} deploy_id={deploy_id}")
 
 
+def _patch_godot_input() -> None:
+	"""Remap clientX/Y via window.ceiScreenToCanvas (portrait CSS-rotaté).
+
+	Godot mappe les événements via getBoundingClientRect AABB, ce qui casse
+	quand #cei-game a rotate(90deg) — les clics ratent UI / parcelles.
+	"""
+	if not JS_PATH.exists():
+		raise SystemExit(f"Missing {JS_PATH}")
+
+	text = JS_PATH.read_text(encoding="utf-8")
+	if "ceiScreenToCanvas" in text and "CEI_INPUT_PATCH" in text:
+		print(f"Input patch already present in {JS_PATH.name}")
+		return
+
+	old = (
+		"computePosition:function(evt,rect){"
+		"const canvas=GodotConfig.canvas;"
+		"const rw=canvas.width/rect.width;"
+		"const rh=canvas.height/rect.height;"
+		"const x=(evt.clientX-rect.x)*rw;"
+		"const y=(evt.clientY-rect.y)*rh;"
+		"return[x,y]}"
+	)
+	new = (
+		"computePosition:function(evt,rect){"
+		"/* CEI_INPUT_PATCH */"
+		"if(typeof window!=='undefined'&&typeof window.ceiScreenToCanvas==='function'){"
+		"const p=window.ceiScreenToCanvas(evt.clientX,evt.clientY);"
+		"if(p&&p.length===2&&isFinite(p[0])&&isFinite(p[1]))return p;"
+		"}"
+		"const canvas=GodotConfig.canvas;"
+		"const rw=canvas.width/rect.width;"
+		"const rh=canvas.height/rect.height;"
+		"const x=(evt.clientX-rect.x)*rw;"
+		"const y=(evt.clientY-rect.y)*rh;"
+		"return[x,y]}"
+	)
+	if old not in text:
+		raise SystemExit("Failed to find GodotInput.computePosition for input patch")
+	JS_PATH.write_text(text.replace(old, new, 1), encoding="utf-8")
+	print(f"Patched GodotInput.computePosition in {JS_PATH.name}")
+
+
 def patch() -> None:
+	_patch_godot_input()
 	deploy_id = _deploy_id()
 	_patch_sw(deploy_id)
 	_stamp_html(deploy_id)

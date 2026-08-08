@@ -89,7 +89,10 @@ const COMBO_OVERFLOW_CAP := 15.0
 const TUTORIAL_ACTIVE := 0
 const TUTORIAL_SELL := 1
 const TUTORIAL_MISSIONS := 2
-const TUTORIAL_DONE := 3
+const TUTORIAL_BUY_PLOT := 3
+const TUTORIAL_DONE := 4
+## Schéma sauvegarde tuto (2 = étape achat parcelle).
+const TUTORIAL_SCHEMA := 2
 const TUTORIAL_CROP_IDS: Array[StringName] = [&"tomato", &"carrot", &"pepper"]
 const TUTORIAL_ORDER_ID := "tut_intro"
 const TUTORIAL_SELL_CROP := &"pepper"
@@ -2121,7 +2124,7 @@ func _advance_tutorial_on_sell() -> void:
 func _advance_tutorial_on_intro_claim() -> void:
 	if not is_tutorial_missions_step():
 		return
-	tutorial_step = TUTORIAL_DONE
+	tutorial_step = TUTORIAL_BUY_PLOT
 	tutorial_grow_seen = true
 	## Mission découverte = tuto uniquement : on la retire du board.
 	_remove_intro_board_quest()
@@ -2129,6 +2132,20 @@ func _advance_tutorial_on_intro_claim() -> void:
 	_refill_orders()
 	missions_changed.emit()
 	board_quests_changed.emit()
+	## Garantit de pouvoir acheter la 1ʳᵉ parcelle shop.
+	var plot_cost := get_boost_cost("plot")
+	if money < plot_cost:
+		add_money(plot_cost - money)
+	toast.emit("Tuto — Achète une parcelle")
+	tutorial_nudge.emit(&"buy_plot")
+	save_game()
+
+
+func _advance_tutorial_on_buy_plot() -> void:
+	if not is_tutorial_buy_plot_step():
+		return
+	tutorial_step = TUTORIAL_DONE
+	tutorial_grow_seen = true
 	toast.emit("Tutoriel terminé — bonne culture !")
 	tutorial_nudge.emit(&"tutorial_done")
 	save_game()
@@ -2152,6 +2169,10 @@ func is_tutorial_sell_step() -> bool:
 
 func is_tutorial_missions_step() -> bool:
 	return tutorial_step == TUTORIAL_MISSIONS
+
+
+func is_tutorial_buy_plot_step() -> bool:
+	return tutorial_step == TUTORIAL_BUY_PLOT
 
 
 func is_tutorial_order(m: MissionData) -> bool:
@@ -2210,6 +2231,8 @@ func tutorial_has_growing_plot() -> bool:
 func tutorial_guidance_kind() -> StringName:
 	if is_tutorial_done():
 		return &""
+	if is_tutorial_buy_plot_step():
+		return &"buy_plot"
 	if is_tutorial_sell_step():
 		return &"sell"
 	if is_tutorial_missions_step():
@@ -2330,7 +2353,9 @@ func buy_boost(boost_id: String) -> bool:
 				toast.emit("Parcelle placee (%d/%d) — Editer pour reorganiser." % [land_placed(), unlocked_plots])
 			else:
 				toast.emit("Parcelle placee (%d/%d)." % [land_placed(), unlocked_plots])
-			if unlocked_plots >= 10 and not terrain_edit_seen:
+			if is_tutorial_buy_plot_step():
+				_advance_tutorial_on_buy_plot()
+			elif unlocked_plots >= 10 and not terrain_edit_seen:
 				tutorial_nudge.emit(&"terrain_edit")
 		_:
 			add_money(cost)
@@ -3849,6 +3874,7 @@ func save_game() -> void:
 		"stock": _stock_to_save(),
 		"boost_costs": _boost_costs.duplicate(),
 		"tutorial_step": tutorial_step,
+		"tutorial_schema": TUTORIAL_SCHEMA,
 		"tutorial_first_ready_seen": tutorial_grow_seen or is_tutorial_done(),
 		"plots": _plots_to_save(),
 		"missions": _missions_to_save(),
@@ -3931,9 +3957,21 @@ func load_game() -> bool:
 	tutorial_grow_seen = bool(data.get("tutorial_first_ready_seen", false))
 	if data.has("tutorial_step"):
 		var raw_step := int(data.get("tutorial_step", TUTORIAL_ACTIVE))
-		## 0 = actif, 1 = vente, 2 = missions, ≥3 = terminé
-		if raw_step >= TUTORIAL_DONE:
+		var schema := int(data.get("tutorial_schema", 1))
+		if schema < TUTORIAL_SCHEMA:
+			## Ancien schéma : 0 actif, 1 vente, 2 missions, ≥3 terminé.
+			if raw_step >= 3:
+				tutorial_step = TUTORIAL_DONE
+			elif raw_step == TUTORIAL_MISSIONS:
+				tutorial_step = TUTORIAL_MISSIONS
+			elif raw_step == TUTORIAL_SELL:
+				tutorial_step = TUTORIAL_SELL
+			else:
+				tutorial_step = TUTORIAL_ACTIVE
+		elif raw_step >= TUTORIAL_DONE:
 			tutorial_step = TUTORIAL_DONE
+		elif raw_step == TUTORIAL_BUY_PLOT:
+			tutorial_step = TUTORIAL_BUY_PLOT
 		elif raw_step == TUTORIAL_MISSIONS:
 			tutorial_step = TUTORIAL_MISSIONS
 		elif raw_step == TUTORIAL_SELL:
@@ -3946,6 +3984,11 @@ func load_game() -> bool:
 		tutorial_step = TUTORIAL_ACTIVE
 	if is_tutorial_done():
 		tutorial_grow_seen = true
+	elif is_tutorial_buy_plot_step():
+		tutorial_grow_seen = true
+		var need := get_boost_cost("plot")
+		if money < need:
+			add_money(need - money)
 	elif is_tutorial_missions_step():
 		tutorial_grow_seen = true
 	elif is_tutorial_sell_step():
