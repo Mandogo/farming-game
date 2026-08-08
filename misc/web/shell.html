@@ -424,9 +424,11 @@ window.ceiSafeInsets = function () {
 	let enginePct = 0;
 	let loadDone = false;
 	const loadStartedAt = performance.now();
+	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
+	const CEI_DEPLOY_ID = 'dev';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 20000;
-	const BUILD_ID = JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
+	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
 
 	/** Purge SW + Cache Storage puis recharge (une seule fois par onglet). */
 	async function ceiHardRefresh(reason) {
@@ -454,7 +456,7 @@ window.ceiSafeInsets = function () {
 		return true;
 	}
 
-	/** Nouveau build détecté (fileSizes changés) → invalide les caches. */
+	/** Nouveau build / shell détecté → invalide les caches PWA. */
 	async function ceiCheckBuildDrift() {
 		try {
 			const prev = localStorage.getItem('cei_build_id') || '';
@@ -467,22 +469,42 @@ window.ceiSafeInsets = function () {
 		return false;
 	}
 
-	/** Force l'activation d'un SW en waiting + reload si le contrôleur change. */
+	/** Active tout nouveau SW immédiatement + reload (PWA comprise). */
 	function ceiWatchServiceWorker() {
 		if (!('serviceWorker' in navigator)) return;
 		let reloading = false;
-		navigator.serviceWorker.addEventListener('controllerchange', function () {
+		function reloadOnce() {
 			if (reloading) return;
 			reloading = true;
 			window.location.reload();
-		});
-		navigator.serviceWorker.ready.then(function (reg) {
+		}
+		navigator.serviceWorker.addEventListener('controllerchange', reloadOnce);
+		function kick(reg) {
+			if (!reg) return;
 			if (reg.waiting) {
-				try { reg.waiting.postMessage('claim'); } catch (e) {}
+				try { reg.waiting.postMessage('update'); } catch (e1) {
+					try { reg.waiting.postMessage('claim'); } catch (e2) {}
+				}
+			}
+			if (reg.installing) {
+				reg.installing.addEventListener('statechange', function () {
+					if (reg.waiting) {
+						try { reg.waiting.postMessage('update'); } catch (e3) {}
+					}
+				});
 			}
 			reg.update().catch(function () {});
-			setInterval(function () { reg.update().catch(function () {}); }, 60000);
-		}).catch(function () {});
+		}
+		navigator.serviceWorker.ready.then(kick).catch(function () {});
+		navigator.serviceWorker.getRegistration().then(kick).catch(function () {});
+		document.addEventListener('visibilitychange', function () {
+			if (!document.hidden) {
+				navigator.serviceWorker.getRegistration().then(kick).catch(function () {});
+			}
+		});
+		setInterval(function () {
+			navigator.serviceWorker.getRegistration().then(kick).catch(function () {});
+		}, 30000);
 	}
 
 	ceiWatchServiceWorker();

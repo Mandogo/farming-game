@@ -24,7 +24,8 @@ Sans ça, le workflow plante avec `Get Pages site failed / Not Found`.
    ```
    (Linux/mac : `python3 tools/patch_web_sw.py && cp -f web_export/crops_express_idle.html web_export/index.html`)
 3. Commit + push `web_export/` → le workflow **Deploy GitHub Pages** publie le site.  
-   Le workflow **écrase toujours** `index.html` avec `crops_express_idle.html` (évite une vieille version PWA).  
+   Le workflow **re-patche le SW** et stamp un `CEI_DEPLOY_ID` à chaque deploy (PWA auto-update : `skipWaiting` + `clients.claim` + reload).  
+   Il **écrase toujours** `index.html` avec `crops_express_idle.html`.  
    Ou lance manuellement : Actions → Deploy GitHub Pages → Run workflow.
 
 ### Deploy Actions qui échoue ?
@@ -42,17 +43,18 @@ Laisse le job `deploy` aller au bout. Un Re-run est OK maintenant (artefacts net
 
 Cause typique : **service worker** qui mélange HTML neuf + JS/WASM anciens.  
 Correctifs en place :
-- SW **network-first** pour HTML/JS (`tools/patch_web_sw.py`)
+- SW **network-first** pour HTML/JS (`tools/patch_web_sw.py`, rejoué à chaque deploy CI)
+- `skipWaiting` + `clients.claim` + **reload auto** des fenêtres PWA à l’activate
 - **Hard refresh auto** si le chargement dépasse ~20 s (purge caches + reload)
-- Détection de **nouveau build** (`fileSizes`) → invalidation cache
+- Détection de **nouveau deploy** (`CEI_DEPLOY_ID` + `fileSizes`) → invalidation cache
 
 ### Téléphone toujours en ancienne version ?
 
-Le service worker Godot met le jeu en cache (PWA). Après un déploiement :
+Normalement **rien à faire** : à la réouverture / focus, le SW se met à jour et recharge.  
+Si un vieux cache résiste encore :
 
-- **Safari iOS** : Réglages → Safari → Effacer historique et données du site (ou ouvrir le lien en onglet privé une fois), puis ré-ajouter à l’écran d’accueil.
-- **Chrome Android** : menu du site → Infos sur le site → Stockage → Effacer / Désinstaller l’appli web, puis recharger [le site](https://mandogo.github.io/farming-game/).
-- Ou ouvrir : `https://mandogo.github.io/farming-game/?v=` + date du jour pour forcer un refresh.
+- Fermer complètement l’app (swipe away) puis la rouvrir une fois
+- Ou ouvrir : `https://mandogo.github.io/farming-game/?v=` + date du jour
 
 ## Mobile
 

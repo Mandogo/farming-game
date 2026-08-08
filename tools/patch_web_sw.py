@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Patch le service worker Godot après export Web.
+"""Patch le service worker Godot + stamp le HTML après export Web.
 
-Problème : cache-first sert un vieux .js/.wasm avec un HTML neuf → chargement
-bloqué à 92 % dans le navigateur (la PWA a souvent un cache cohérent).
+Problème : le SW Godot est cache-first. Sans patch, une PWA (iPhone « Sur
+l’écran d’accueil ») garde l’ancien HTML/JS indéfiniment — même après un
+déploiement Pages réussi. Les changements shell-only ne touchent pas
+fileSizes → l’ancien BUILD_ID ne détectait rien.
 
 Ce script :
-- force un CACHE_VERSION unique
-- passe les navigations + .html/.js en network-first
-- skipWaiting à l'install pour activer le nouveau SW tout de suite
+- force un CACHE_VERSION unique (hash wasm/pck/js/html)
+- skipWaiting à l’install + clients.claim + reload des fenêtres à l’activate
+- navigations + .html/.js en network-first
+- stamp CEI_DEPLOY_ID dans les HTML (détecte les updates shell-only)
+- synchronise index.html ← crops_express_idle.html
 """
 from __future__ import annotations
 
@@ -19,6 +23,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web_export"
 SW_PATH = WEB / "crops_express_idle.service.worker.js"
+HTML_MAIN = WEB / "crops_express_idle.html"
+HTML_INDEX = WEB / "index.html"
 
 
 def _file_token(*names: str) -> str:
@@ -29,42 +35,93 @@ def _file_token(*names: str) -> str:
 			h.update(p.name.encode())
 			h.update(str(p.stat().st_size).encode())
 			h.update(p.read_bytes()[:65536])
-	return h.hexdigest()[:10]
+			# Inclut aussi la fin (shell JS souvent en bas du HTML).
+			data = p.read_bytes()
+			if len(data) > 65536:
+				h.update(data[-65536:])
+	return h.hexdigest()[:12]
 
 
-def patch() -> None:
-	if not SW_PATH.exists():
-		raise SystemExit(f"Missing {SW_PATH}")
-
-	text = SW_PATH.read_text(encoding="utf-8")
+def _deploy_id() -> str:
 	token = _file_token(
 		"crops_express_idle.wasm",
 		"crops_express_idle.pck",
 		"crops_express_idle.js",
 		"crops_express_idle.html",
+		"crops_express_idle.service.worker.js",
 	)
-	version = f"{int(time.time())}|{token}"
+	return f"{int(time.time())}|{token}"
 
-	text = re.sub(
+
+def _patch_sw(version: str) -> None:
+	if not SW_PATH.exists():
+		raise SystemExit(f"Missing {SW_PATH}")
+
+	text = SW_PATH.read_text(encoding="utf-8")
+
+	text2, n = re.subn(
 		r"const CACHE_VERSION = '[^']*';",
 		f"const CACHE_VERSION = '{version}';",
 		text,
 		count=1,
 	)
+	if n != 1:
+		raise SystemExit("Failed to set CACHE_VERSION")
+	text = text2
 
-	# skipWaiting dès l'install
-	if "self.skipWaiting()" not in text.split("addEventListener('install'")[1].split("addEventListener")[0]:
+	# CACHED_FILES : inclure index.html pour les navigations /
+	if '"index.html"' not in text:
 		text = text.replace(
-			"self.addEventListener('install', (event) => {\n\tevent.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES)));\n});",
-			"self.addEventListener('install', (event) => {\n\tself.skipWaiting();\n\tevent.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES)));\n});",
+			'const CACHED_FILES = ["crops_express_idle.html"',
+			'const CACHED_FILES = ["index.html","crops_express_idle.html"',
+			1,
 		)
 
-	# clients.claim à l'activate
-	if "self.clients.claim()" not in text:
-		text = text.replace(
-			").then(function () {\n\t\t// Enable navigation preload if available.\n\t\treturn ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();\n\t}));",
-			").then(function () {\n\t\t// Enable navigation preload if available.\n\t\treturn ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();\n\t}).then(function () {\n\t\treturn self.clients.claim();\n\t}));",
-		)
+	install_block = """self.addEventListener('install', (event) => {
+	self.skipWaiting();
+	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES)));
+});"""
+
+	text2, n = re.subn(
+		r"self\.addEventListener\('install',\s*\(event\)\s*=>\s*\{[\s\S]*?\n\}\);",
+		install_block,
+		text,
+		count=1,
+	)
+	if n != 1:
+		raise SystemExit("Failed to patch install handler")
+	text = text2
+
+	activate_block = """self.addEventListener('activate', (event) => {
+	event.waitUntil(caches.keys().then(
+		function (keys) {
+			// Remove old caches.
+			return Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map((key) => caches.delete(key)));
+		}
+	).then(function () {
+		// Enable navigation preload if available.
+		return ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
+	}).then(function () {
+		return self.clients.claim();
+	}).then(function () {
+		// Force les PWA / onglets déjà ouverts à recharger (HTML neuf).
+		return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (all) {
+			return Promise.all(all.map(function (c) {
+				try { return c.navigate(c.url); } catch (e) { return undefined; }
+			}));
+		});
+	}));
+});"""
+
+	text2, n = re.subn(
+		r"self\.addEventListener\('activate',\s*\(event\)\s*=>\s*\{[\s\S]*?\n\}\);",
+		activate_block,
+		text,
+		count=1,
+	)
+	if n != 1:
+		raise SystemExit("Failed to patch activate handler")
+	text = text2
 
 	new_fetch = r'''self.addEventListener(
 	'fetch',
@@ -96,6 +153,9 @@ def patch() -> None:
 					let cached = await cache.match(event.request);
 					if (cached == null && pathName) {
 						cached = await cache.match(pathName);
+					}
+					if (cached == null) {
+						cached = await cache.match('index.html');
 					}
 					if (cached == null) {
 						cached = await cache.match(CACHED_FILES[0]);
@@ -151,9 +211,62 @@ def patch() -> None:
 	)
 	if n != 1:
 		raise SystemExit("Failed to patch fetch handler in service worker")
+	text = text2
 
-	SW_PATH.write_text(text2, encoding="utf-8")
+	SW_PATH.write_text(text, encoding="utf-8")
 	print(f"Patched {SW_PATH.name} CACHE_VERSION={version}")
+
+
+def _stamp_html(deploy_id: str) -> None:
+	"""Injecte/ maj CEI_DEPLOY_ID + BUILD_ID dans le HTML exporté."""
+	if not HTML_MAIN.exists():
+		raise SystemExit(f"Missing {HTML_MAIN}")
+
+	text = HTML_MAIN.read_text(encoding="utf-8")
+
+	if "const CEI_DEPLOY_ID" in text:
+		text2, n = re.subn(
+			r"const CEI_DEPLOY_ID = '[^']*';",
+			f"const CEI_DEPLOY_ID = '{deploy_id}';",
+			text,
+			count=1,
+		)
+		if n != 1:
+			raise SystemExit("Failed to stamp CEI_DEPLOY_ID")
+		text = text2
+	else:
+		# Ancien HTML : injecte juste avant BUILD_ID ou loadStartedAt
+		needle = "const loadStartedAt = performance.now();"
+		if needle not in text:
+			raise SystemExit("Cannot find injection point for CEI_DEPLOY_ID")
+		text = text.replace(
+			needle,
+			"const loadStartedAt = performance.now();\n"
+			f"\tconst CEI_DEPLOY_ID = '{deploy_id}';",
+			1,
+		)
+
+	# BUILD_ID = deploy stamp + fileSizes (détecte shell-only ET gros binaires)
+	if re.search(r"const BUILD_ID = ", text):
+		text2, n = re.subn(
+			r"const BUILD_ID = [^;]+;",
+			"const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});",
+			text,
+			count=1,
+		)
+		if n != 1:
+			raise SystemExit("Failed to stamp BUILD_ID")
+		text = text2
+
+	HTML_MAIN.write_text(text, encoding="utf-8")
+	HTML_INDEX.write_text(text, encoding="utf-8")
+	print(f"Stamped CEI_DEPLOY_ID={deploy_id} → {HTML_MAIN.name} + {HTML_INDEX.name}")
+
+
+def patch() -> None:
+	deploy_id = _deploy_id()
+	_patch_sw(deploy_id)
+	_stamp_html(deploy_id)
 
 
 if __name__ == "__main__":
