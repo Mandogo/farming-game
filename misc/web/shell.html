@@ -602,22 +602,25 @@ window.ceiSafeInsets = function () {
 	}
 
 	/**
-	 * Bandes seulement sur les bords « longs » du téléphone (gauche/droite en paysage).
-	 * En portrait + rotate(90deg) CW (y vers le bas) :
+	 * Bandes seulement sur les bords gauche/droite du jeu paysage.
+	 * Portrait + rotate(90deg) CW (y vers le bas) :
 	 *   gauche logique → haut physique (notch) ; droite logique → bas physique (home).
-	 * Ne pas symétriser au max(notch, home) : ça doublait la bande du bas.
+	 * Le bas ne doit PAS être plus large que les bandes latérales du vrai paysage :
+	 * on prend le même « comfort » (minSide) et on n’ajoute que l’éventuel extra safe-area.
 	 */
-	function fitLandscapeGame(logicW, logicH, needsRotate) {
+	function fitLandscapeGame(logicW, logicH, needsRotate, safeOverrides) {
 		const mobile = isMobileViewport();
 		const minSide = mobile ? 28 : 0;
 		const maxPadX = Math.max(0, Math.floor((logicW - 320) * 0.5));
-		const safe = readSafeInsets();
+		const safe = safeOverrides || readSafeInsets();
 
 		let padL;
 		let padR;
 		if (needsRotate) {
-			padL = Math.min(maxPadX, Math.max(safe.t, minSide)); /* → haut téléphone */
-			padR = Math.min(maxPadX, Math.max(safe.b, minSide)); /* → bas téléphone */
+			/* Même confort que les côtés en paysage (28), + safe-area sans sur-marge. */
+			const comfort = minSide;
+			padL = Math.min(maxPadX, Math.max(comfort, safe.t));
+			padR = Math.min(maxPadX, Math.max(comfort, safe.b));
 		} else {
 			padL = Math.min(maxPadX, Math.max(safe.l, minSide));
 			padR = Math.min(maxPadX, Math.max(safe.r, minSide));
@@ -662,13 +665,8 @@ window.ceiSafeInsets = function () {
 		const shell = document.getElementById('cei-shell');
 		const game = document.getElementById('cei-game');
 		const canvas = document.getElementById('canvas');
-		const m = landscapeMetrics();
-		window.ceiLandscapeSize = { w: m.logicW, h: m.logicH };
 
-		document.documentElement.classList.toggle('cei-portrait', m.needsRotate);
-		document.body.classList.toggle('cei-portrait', m.needsRotate);
-
-		/* Shell / body toujours plein viewport peint — plus de bande hors-stage en bas. */
+		/* Shell / body toujours plein viewport peint. */
 		document.documentElement.style.width = '100%';
 		document.documentElement.style.height = '100%';
 		document.body.style.width = '100%';
@@ -692,8 +690,35 @@ window.ceiSafeInsets = function () {
 		shell.style.transform = 'none';
 		shell.style.overflow = 'hidden';
 
-		const box = fitLandscapeGame(m.logicW, m.logicH, m.needsRotate);
+		/*
+		 * Mesurer le shell réel APRÈS full-bleed.
+		 * Avant : physH via max(vv/inner/client) < hauteur peinte du shell →
+		 * trou noir sous le stage tourné (= « grosse marge bas » en vertical seulement).
+		 */
+		void shell.offsetWidth;
+		const fallback = physicalViewportSize();
+		const physW = Math.max(1, shell.clientWidth || Math.round(shell.getBoundingClientRect().width) || fallback.w);
+		const physH = Math.max(1, shell.clientHeight || Math.round(shell.getBoundingClientRect().height) || fallback.h);
+		const needsRotate = physH > physW;
+		const logicW = Math.max(physW, physH);
+		const logicH = Math.min(physW, physH);
+		window.ceiLandscapeSize = { w: logicW, h: logicH };
+
+		document.documentElement.classList.toggle('cei-portrait', needsRotate);
+		document.body.classList.toggle('cei-portrait', needsRotate);
+
+		const box = fitLandscapeGame(logicW, logicH, needsRotate);
 		window.ceiLayoutPads = box.pads;
+		window.ceiLayoutDebug = {
+			physW: physW,
+			physH: physH,
+			logicW: logicW,
+			logicH: logicH,
+			needsRotate: needsRotate,
+			pads: box.pads,
+			safe: readSafeInsets(),
+			shell: { w: shell.clientWidth, h: shell.clientHeight },
+		};
 
 		if (game) {
 			game.style.position = 'absolute';
@@ -711,16 +736,14 @@ window.ceiSafeInsets = function () {
 			game.style.width = box.w + 'px';
 			game.style.height = box.h + 'px';
 
-			if (m.needsRotate) {
+			if (needsRotate) {
 				/*
-				 * Shell full-bleed (noir) ; seul le cadre jeu tourne.
-				 * Transform = même repère que l’ancien shell, avec offset des pads
-				 * (translate stage → rotate → translate écran).
+				 * Stage calé sur la boîte réelle du shell (physW×physH).
+				 * translate(physW) + rotate(90) : droite logique → bas physique.
 				 */
 				const ox = Math.round(box.x);
 				const oy = Math.round(box.y);
-				const pw = Math.round(m.physW);
-				game.style.transform = 'translate(' + pw + 'px, 0px) rotate(90deg) translate(' + ox + 'px, ' + oy + 'px)';
+				game.style.transform = 'translate(' + physW + 'px, 0px) rotate(90deg) translate(' + ox + 'px, ' + oy + 'px)';
 			} else {
 				game.style.left = box.x + 'px';
 				game.style.top = '0';
