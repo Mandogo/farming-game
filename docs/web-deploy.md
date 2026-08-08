@@ -33,10 +33,24 @@ Causes fréquentes (ce n’est **pas** le contenu `web_export/`) :
 
 1. **Re-run** du même workflow → 2 artefacts `github-pages` → erreur `Artifact count is 2`.  
    Correctif : purge des vieux artefacts + nom `github-pages-<attempt>`.
-2. **File d’attente Pages** souvent > 10 min ; `actions/deploy-pages` **plafonne à 10 min** et peut annuler.  
-   Correctif : déploiement OIDC + poll **45 min** (plus l’action officielle bornée).
+2. **File d’attente Pages** souvent > 10 min ; `actions/deploy-pages` **plafonne à 10 min** et **annule** le déploiement.  
+   Correctif : déploiement OIDC + poll **45 min** (workflow actuel).
+3. **Job `deploy` coincé en « queued »** sans runner (parfois > 1 h) alors que `build` est vert.  
+   Cause typique : verrou d’environnement `github-pages` (déploiement sans statut) + ancienne concurrence `cancel-in-progress: false` qui empêche tout nouveau run de passer.
 
-Laisse le job `deploy` aller au bout. Un Re-run est OK maintenant (artefacts nettoyés).
+#### Débloquer un run Pages gelé (manuel, côté owner)
+
+1. Actions → run coincé → **Cancel workflow**.
+2. Settings → Environments → **github-pages** → Deployment history → supprimer les déploiements « Active / Pending » orphelins.
+3. (optionnel API) annuler un déploiement Pages orphelin :
+   ```bash
+   gh api -X POST repos/Mandogo/farming-game/pages/deployments/<sha>/cancel
+   gh api -X DELETE repos/Mandogo/farming-game/deployments/<id>
+   ```
+4. Relancer : Actions → **Deploy GitHub Pages** → Run workflow  
+   (ou un push sur `web_export/` / le workflow). Un nouveau run **annule** désormais l’ancien (`cancel-in-progress: true`).
+
+Laisse le job `deploy` aller au bout (jusqu’à ~45 min si la file Pages est lente). Un Re-run est OK (artefacts nettoyés).
 
 ### Navigateur bloqué à 92 % ?
 
