@@ -365,14 +365,14 @@ const _SKILL_DEFS := {
 	"order_flow": {
 		"title": "Bouche à oreille", "short": "Flux",
 		"desc": "De nouvelles commandes arrivent plus vite.",
-		"next": ["−8 % délai", "−17 % délai", "−25 % délai"],
+		"next": ["-8 % délai", "-17 % délai", "-25 % délai"],
 		"costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_truck", "parent": "", "branch": "orders",
 	},
 	"order_slots": {
 		"title": "Carnet rempli", "short": "Carnet",
 		"desc": "Débloque des emplacements de commande supplémentaires (1 seul au départ).",
-		"next": ["2ᵉ commande active", "3ᵉ commande active"],
+		"next": ["2e commande active", "3e commande active"],
 		"costs": [2, 4], "max_level": 2,
 		"icon": "ui_mission", "parent": "", "branch": "orders",
 	},
@@ -421,7 +421,7 @@ const _SKILL_DEFS := {
 	"money_shop": {
 		"title": "Soldeur", "short": "Soldeur",
 		"desc": "Prix réduits à la boutique.",
-		"next": ["−3 % coûts", "−5 % coûts", "−8 % coûts"],
+		"next": ["-3 % coûts", "-5 % coûts", "-8 % coûts"],
 		"costs": [2, 2, 3], "max_level": 3,
 		"icon": "ui_tab_shop", "parent": "", "branch": "boutique", "ray_root": true,
 	},
@@ -435,21 +435,21 @@ const _SKILL_DEFS := {
 	"boutique_land": {
 		"title": "Parcelles soldées", "short": "Parcelles",
 		"desc": "Jetons de terre moins chers. Prestige 2.",
-		"next": ["−5 % coût terre", "−10 % coût terre", "−15 % coût terre"],
+		"next": ["-5 % coût terre", "-10 % coût terre", "-15 % coût terre"],
 		"costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
 		"icon": "ui_shop_plot", "parent": "", "branch": "boutique",
 	},
 	"boutique_tools": {
 		"title": "Outils soldés", "short": "Outils",
 		"desc": "Boosts Vitesse / Clic moins chers. Prestige 2.",
-		"next": ["−5 % coût boosts", "−10 % coût boosts", "−15 % coût boosts"],
+		"next": ["-5 % coût boosts", "-10 % coût boosts", "-15 % coût boosts"],
 		"costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
 		"icon": "ui_shop_click", "parent": "", "branch": "boutique",
 	},
 	"atelier_gears": {
 		"title": "Rouages", "short": "Rouages",
 		"desc": "Machines moins chères. Prestige 2.",
-		"next": ["−4 % coût machines", "−8 % coût machines", "−12 % coût machines"],
+		"next": ["-4 % coût machines", "-8 % coût machines", "-12 % coût machines"],
 		"costs": [2, 2, 3], "max_level": 3, "prestige_req": 2,
 		"icon": "ui_gardener", "parent": "", "branch": "boutique",
 	},
@@ -484,7 +484,7 @@ const _SKILL_DEFS := {
 	"atelier_network_courier": {
 		"title": "Réseau livreur", "short": "Réseau",
 		"desc": "Niv.1 : +1 portée machines. Puis livreur auto plus rentable. Prestige 5.",
-		"next": ["+1 portée globale", "Or auto +10 %, coût −15 %", "Or auto +20 %, coût −30 %", "Or auto +30 %, coût −45 %"],
+		"next": ["+1 portée globale", "Or auto +10 %, coût -15 %", "Or auto +20 %, coût -30 %", "Or auto +30 %, coût -45 %"],
 		"costs": [3, 3, 4, 5], "max_level": 4, "prestige_req": 5,
 		"icon": "ui_auto_delivery", "parent": "atelier_gears", "branch": "boutique",
 	},
@@ -529,7 +529,7 @@ const _RELIC_DEFS := {
 	},
 	"pulse_tempo": {
 		"title": "Tempo de livraison",
-		"desc": "+1 s de fenêtre combo / niv. Seuil −1 dès niv.2.",
+		"desc": "+1 s de fenêtre combo / niv. Seuil -1 dès niv.2.",
 		"icon": "ui_combo", "tag": "Livraison",
 	},
 	"open_gate": {
@@ -544,7 +544,7 @@ const _RELIC_DEFS := {
 	},
 	"machine_oil": {
 		"title": "Huile de machine",
-		"desc": "Coûts boutique −3 % / niv (puis rayon machines).",
+		"desc": "Coûts boutique -3 % / niv (puis rayon machines).",
 		"icon": "ui_fertilizer", "tag": "Meta",
 	},
 }
@@ -2132,7 +2132,7 @@ func _advance_tutorial_on_intro_claim() -> void:
 	_refill_orders()
 	missions_changed.emit()
 	board_quests_changed.emit()
-	## Garantit de pouvoir acheter la 1ʳᵉ parcelle shop.
+	## Garantit de pouvoir acheter la 1ere parcelle shop.
 	var plot_cost := get_boost_cost("plot")
 	if money < plot_cost:
 		add_money(plot_cost - money)
@@ -3244,16 +3244,16 @@ func relic_effect_summary(relic_id: String, level: int = -1) -> String:
 		"green_ledger":
 			return "XP livraisons +%d %%" % int(5 * lvl)
 		"pulse_tempo":
-			var extra := " · seuil −1" if lvl >= 2 else ""
+			var extra := " · seuil -1" if lvl >= 2 else ""
 			return "+%d s fenêtre combo%s" % [lvl, extra]
 		"open_gate":
 			if lvl >= 3:
 				return "+1 commande max"
 			return "Durée commandes +%d %%" % int(4 * lvl)
 		"seed_bank":
-			return "Cultures unlock −1 prestige"
+			return "Cultures unlock -1 prestige"
 		"machine_oil":
-			return "Boutique −%d %% · machines +%d %%" % [int(3 * lvl), int(10 * lvl)]
+			return "Boutique -%d %% · machines +%d %%" % [int(3 * lvl), int(10 * lvl)]
 		_:
 			return ""
 

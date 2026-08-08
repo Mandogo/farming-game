@@ -2407,7 +2407,7 @@ func _scarecrow_text_for(kind: StringName) -> String:
 		&"skill_buy_zone":
 			return "Débloque « Clics en zone » !"
 		&"relics_tab":
-			return "Ouvre Reliques (3ᵉ menu)."
+			return "Ouvre Reliques (3e menu)."
 		&"relics_explain":
 			var pct := GameState.prestige_points_bonus_pct()
 			return "Pts prestige : +%d%% or/XP." % pct
