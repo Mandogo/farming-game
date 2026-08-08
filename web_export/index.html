@@ -386,8 +386,17 @@ body.cei-portrait {
 const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":12798444,"crops_express_idle.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 /* Adaptive(=2) suit window.inner* (portrait) alors que le CSS est tourné → stretch. */
+const CEI_SW_FILE = (GODOT_CONFIG && GODOT_CONFIG.serviceWorker)
+	? String(GODOT_CONFIG.serviceWorker)
+	: 'crops_express_idle.service.worker.js';
 if (GODOT_CONFIG && typeof GODOT_CONFIG === 'object') {
 	GODOT_CONFIG.canvasResizePolicy = 0;
+	/*
+	 * On enregistre le SW nous-mêmes (avec ?cei= + updateViaCache:none).
+	 * Si Godot réenregistre le même fichier SANS query string après startGame,
+	 * le navigateur voit 2 scriptURL → activate en boucle → reload infini.
+	 */
+	GODOT_CONFIG.serviceWorker = '';
 }
 const engine = new Engine(GODOT_CONFIG);
 
@@ -422,11 +431,11 @@ window.ceiSafeInsets = function () {
 	let loadDone = false;
 	const loadStartedAt = performance.now();
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
-	const CEI_DEPLOY_ID = '1786205506|7c77cd3c472e';
+	const CEI_DEPLOY_ID = '1786206487|0d0f54c92f10';
 	/* Incrémenter pour forcer un hard-refresh PWA après un fix shell layout. */
-	const CEI_LAYOUT_VER = 'pwa-force-v5';
+	const CEI_LAYOUT_VER = 'pwa-noloop-v6';
 	const EXPECT_MS = 4500;
-	const LOAD_WATCHDOG_MS = 20000;
+	const LOAD_WATCHDOG_MS = 45000;
 	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + (typeof CEI_LAYOUT_VER !== 'undefined' ? CEI_LAYOUT_VER + '|' : '') + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
 	let ceiRefreshing = false;
 
@@ -505,9 +514,7 @@ window.ceiSafeInsets = function () {
 	/** Ré-enregistre le SW avec ?cei= + updateViaCache:none (crucial iOS). */
 	async function ceiReregisterServiceWorker() {
 		if (!('serviceWorker' in navigator)) return null;
-		const swFile = (GODOT_CONFIG && GODOT_CONFIG.serviceWorker)
-			? String(GODOT_CONFIG.serviceWorker)
-			: 'crops_express_idle.service.worker.js';
+		const swFile = CEI_SW_FILE;
 		const swUrl = swFile + (swFile.indexOf('?') >= 0 ? '&' : '?')
 			+ 'cei=' + encodeURIComponent(String(CEI_DEPLOY_ID));
 		try {
@@ -520,46 +527,53 @@ window.ceiSafeInsets = function () {
 		}
 	}
 
-	/** Active tout nouveau SW immédiatement + reload (PWA comprise). */
+	/** Active un nouveau SW sans relancer le chargement en boucle. */
 	function ceiWatchServiceWorker() {
 		if (!('serviceWorker' in navigator)) return;
 		let reloading = false;
-		function reloadOnce() {
+		function reloadOnce(reason) {
 			if (reloading || ceiRefreshing) return;
+			/* Un seul reload auto par deploy dans cet onglet (anti-boucle PWA). */
+			const key = 'cei_cc_' + String(CEI_DEPLOY_ID);
+			try {
+				if (sessionStorage.getItem(key) === '1') {
+					console.warn('[CEI] Skip reload (already did for deploy)', reason);
+					return;
+				}
+				sessionStorage.setItem(key, '1');
+			} catch (e0) { /* private mode */ }
 			reloading = true;
+			console.warn('[CEI] Reload once:', reason);
 			window.location.reload();
 		}
-		navigator.serviceWorker.addEventListener('controllerchange', reloadOnce);
+		navigator.serviceWorker.addEventListener('controllerchange', function () {
+			reloadOnce('controllerchange');
+		});
 		navigator.serviceWorker.addEventListener('message', function (ev) {
 			const d = ev && ev.data ? ev.data : null;
 			if (!d || d.type !== 'cei-reload') return;
 			const remote = String(d.v || '');
+			/* Même version = déjà à jour : ne pas recharger (sinon boucle activate). */
 			if (remote && remote !== String(CEI_DEPLOY_ID)) {
 				ceiHardRefresh('sw_message', remote);
-			} else {
-				reloadOnce();
 			}
 		});
 		function kick(reg) {
 			if (!reg) return;
 			if (reg.waiting) {
-				try { reg.waiting.postMessage('update'); } catch (e1) {
-					try { reg.waiting.postMessage('claim'); } catch (e2) {}
-				}
+				try { reg.waiting.postMessage('claim'); } catch (e1) {}
 			}
 			if (reg.installing) {
 				reg.installing.addEventListener('statechange', function () {
 					if (reg.waiting) {
-						try { reg.waiting.postMessage('update'); } catch (e3) {}
+						try { reg.waiting.postMessage('claim'); } catch (e3) {}
 					}
 				});
 			}
-			reg.update().catch(function () {});
 		}
 		function refreshTick() {
 			ceiProbeRemoteVersion();
 			ceiReregisterServiceWorker().then(kick).catch(function () {});
-			navigator.serviceWorker.getRegistration().then(kick).catch(function () {});
 		}
 		navigator.serviceWorker.ready.then(kick).catch(function () {});
 		refreshTick();
@@ -567,7 +581,7 @@ window.ceiSafeInsets = function () {
 			if (!document.hidden) refreshTick();
 		});
 		window.addEventListener('focus', refreshTick);
-		setInterval(refreshTick, 20000);
+		setInterval(refreshTick, 60000);
 	}
 
 	ceiWatchServiceWorker();
@@ -964,28 +978,30 @@ window.ceiSafeInsets = function () {
 	}
 
 	if (missing.length !== 0) {
-		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
-			let serviceWorkerRegistrationPromise;
-			try {
-				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
-			} catch (err) {
-				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
-			}
-			Promise.race([
-				serviceWorkerRegistrationPromise.then((registration) => {
-					if (registration != null) {
-						return Promise.reject(new Error('Service worker already exists.'));
-					}
-					return registration;
-				}).then(() => engine.installServiceWorker()),
-				new Promise((resolve) => {
-					setTimeout(() => resolve(), 2000);
-				}),
-			]).then(() => {
-				window.location.reload();
-			}).catch((err) => {
+		/*
+		 * Ancien chemin Godot : install SW puis reload. On enregistre via CEI
+		 * (même URL ?cei=) pour ne pas créer un second scriptURL concurrent.
+		 */
+		if (GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			ceiReregisterServiceWorker().then(function () {
+				reloadGuardThenReload();
+			}).catch(function (err) {
 				console.error('Error while registering service worker:', err);
+				const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+				displayFailureNotice(missingMsg + missing.join('\n'));
 			});
+			function reloadGuardThenReload() {
+				const key = 'cei_cc_' + String(CEI_DEPLOY_ID);
+				try {
+					if (sessionStorage.getItem(key) === '1') {
+						const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+						displayFailureNotice(missingMsg + missing.join('\n'));
+						return;
+					}
+					sessionStorage.setItem(key, '1');
+				} catch (e0) {}
+				window.location.reload();
+			}
 		} else {
 			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
 			displayFailureNotice(missingMsg + missing.join('\n'));

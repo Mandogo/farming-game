@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1786205506|7c77cd3c472e';
+const CACHE_VERSION = '1786206487|0d0f54c92f10';
 /** @type {string} */
 const CACHE_PREFIX = 'Crops Express Id-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -28,20 +28,26 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
 	event.waitUntil(caches.keys().then(
 		function (keys) {
-			// Remove old caches.
-			return Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map((key) => caches.delete(key)));
+			// Remove old caches. Only notify clients when this is a real update
+			// (old cache present) — otherwise first install + claim reloads forever.
+			var oldKeys = keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME);
+			var isUpdate = oldKeys.length > 0;
+			return Promise.all(oldKeys.map((key) => caches.delete(key))).then(function () {
+				return isUpdate;
+			});
 		}
-	).then(function () {
+	).then(function (isUpdate) {
 		// Enable navigation preload if available.
-		return ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
-	}).then(function () {
-		return self.clients.claim();
-	}).then(function () {
-		// iOS PWA : navigate() est souvent ignoré → postMessage + reload côté page.
+		var preload = ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
+		return preload.then(function () { return isUpdate; });
+	}).then(function (isUpdate) {
+		return self.clients.claim().then(function () { return isUpdate; });
+	}).then(function (isUpdate) {
+		if (!isUpdate) return;
+		// Vraie mise à jour : prévenir la page (elle hard-refresh si deploy_id diffère).
 		return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (all) {
 			return Promise.all(all.map(function (c) {
 				try { c.postMessage({ type: 'cei-reload', v: CACHE_VERSION }); } catch (e1) {}
-				try { return c.navigate(c.url); } catch (e) { return undefined; }
 			}));
 		});
 	}));
@@ -222,13 +228,10 @@ self.addEventListener('message', (event) => {
 		if (!client) {
 			return; // Not a valid client.
 		}
-		if (msg === 'claim') {
+		if (msg === 'claim' || msg === 'update') {
 			self.skipWaiting().then(() => self.clients.claim());
 		} else if (msg === 'clear') {
 			caches.delete(CACHE_NAME);
-		} else if (msg === 'update') {
-			self.skipWaiting().then(() => self.clients.claim()).then(() => self.clients.matchAll()).then((all) => all.forEach((c) => c.navigate(c.url)));
 		}
 	});
 });
-
