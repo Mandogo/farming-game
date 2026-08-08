@@ -75,6 +75,9 @@ var _finger_label: Label = null
 var _finger_hotspot: Vector2 = Vector2(10, 9)  # bout de l'index (haut-gauche de l'ic?ne)
 var _finger_target_nudge := Vector2(-2, -2)  # aligne le bout de l'index sur la cible
 var _finger_aura: Control = null
+var _scarecrow_guide: Control = null
+var _scarecrow_label: Label = null
+var _scarecrow_icon: TextureRect = null
 var _tut_deliver_btn: Control = null
 var _active_sell_modal = null
 var _debug_panel = null
@@ -385,6 +388,7 @@ func _reload_run_ui(restart_tutorial: bool = false) -> void:
 		return
 	_rebuilding_ui = true
 	_clear_finger_tutorial()
+	_hide_scarecrow_guide()
 	_tutorial_mode = &""
 	_last_tutorial_nudge = &""
 	_skill_tree_tuto_active = false
@@ -605,7 +609,7 @@ func _load_textures() -> void:
 		"player_avatar", "green_thumb", "edit_pen", "hourglass",
 		"zoom_in", "zoom_out",
 		"pan_up", "pan_down", "pan_left", "pan_right",
-		"level_up",
+		"level_up", "scarecrow",
 	]
 	for n in ui_keys:
 		var path := "res://assets/textures/ui/%s.png" % n
@@ -708,6 +712,7 @@ func _process(delta: float) -> void:
 	_update_plot_hover()
 	_process_field_drag()
 	_update_finger_tutorial(delta)
+	_update_scarecrow_guide_position()
 	_mission_refresh -= delta
 	if _mission_refresh <= 0.0:
 		_mission_refresh = 0.35
@@ -1888,6 +1893,12 @@ func _close_skill_tree() -> void:
 		if skill_tree_overlay.visible:
 			Sfx.ui_close()
 		skill_tree_overlay.visible = false
+	## Tuto compétences : si pas encore acheté « Clics en zone », re-pointe le bouton arbre.
+	if _is_skill_tree_tutorial_pending():
+		_tutorial_mode = &"skill_tree"
+		_skill_tree_tuto_active = true
+		_last_tutorial_nudge = &""
+		call_deferred("_on_tutorial_nudge", &"skill_tree")
 
 
 func _make_parchment_style() -> StyleBoxFlat:
@@ -2081,10 +2092,44 @@ func _open_skill_tree() -> void:
 	_open_skill_tree_focused("")
 
 
+func _is_skill_tree_tutorial_pending() -> bool:
+	return (
+		not GameState.skill_tree_intro_seen
+		and GameState.get_skill_level("root_hub") <= 0
+		and (
+			_skill_tree_tuto_active
+			or _tutorial_mode == &"skill_tree"
+			or _tutorial_mode == &"skill_pick_zone"
+			or _tutorial_mode == &"skill_buy_zone"
+		)
+	)
+
+
+func _finish_skill_tree_tutorial() -> void:
+	_skill_tree_tuto_active = false
+	if (
+		_tutorial_mode == &"skill_tree"
+		or _tutorial_mode == &"skill_pick_zone"
+		or _tutorial_mode == &"skill_buy_zone"
+	):
+		_tutorial_mode = &""
+	_last_tutorial_nudge = &""
+	_clear_finger_tutorial()
+	_hide_scarecrow_guide()
+	if not GameState.skill_tree_intro_seen:
+		GameState.skill_tree_intro_seen = true
+		GameState.save_game()
+
+
 func _open_skill_tree_focused(skill_id: String) -> void:
 	## Ouvre l'arbre ; si skill_id est renseigné, va sur son axe et sélectionne le nœud.
 	if skill_tree_overlay == null:
 		return
+	var skill_tuto := _is_skill_tree_tutorial_pending() \
+		or _tutorial_mode == &"skill_tree" \
+		or _skill_tree_tuto_active
+	if skill_tuto and skill_id.is_empty() and GameState.get_skill_level("root_hub") <= 0:
+		skill_id = "root_hub"
 	_skill_selected_id = ""
 	_skill_pan_offset = Vector2.ZERO
 	_skill_zoom = 1.0
@@ -2098,19 +2143,23 @@ func _open_skill_tree_focused(skill_id: String) -> void:
 		_skill_open_axis = axis if not axis.is_empty() else "trunk"
 		_skill_focus_pending_id = skill_id
 		_skill_anchor_id = skill_id
-	if _skill_tree_tuto_active or _tutorial_mode == &"skill_tree":
-		_skill_tree_tuto_active = false
-		_tutorial_mode = &""
-		if not GameState.skill_tree_intro_seen:
-			GameState.skill_tree_intro_seen = true
-			GameState.save_game()
-	_clear_finger_tutorial()
+	if skill_tuto and GameState.get_skill_level("root_hub") <= 0 and not GameState.skill_tree_intro_seen:
+		## Continue le tuto jusqu'à l'achat de « Clics en zone ».
+		_skill_tree_tuto_active = true
+		_tutorial_mode = &"skill_pick_zone"
+		_last_tutorial_nudge = &""
+	else:
+		if skill_tuto:
+			_finish_skill_tree_tutorial()
+		_clear_finger_tutorial()
 	_rebuild_skill_modal()
 	skill_tree_overlay.z_index = 250
 	skill_tree_overlay.top_level = true
 	skill_tree_overlay.visible = true
 	skill_tree_overlay.move_to_front()
 	Sfx.ui_open()
+	if _tutorial_mode == &"skill_pick_zone":
+		call_deferred("_on_tutorial_nudge", &"skill_pick_zone")
 
 
 func _on_level(level: int, _sp: int) -> void:
@@ -2323,117 +2372,157 @@ func _fit_scroll_child_width(scroll: ScrollContainer, content: Control) -> void:
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 
+func _scarecrow_text_for(kind: StringName) -> String:
+	match kind:
+		&"plant":
+			var cname := GameState.crop_display_name(GameState.tutorial_next_crop_id())
+			return "Clique sur une parcelle vide pour planter une %s !" % cname
+		&"switch_seed":
+			var cname2 := GameState.crop_display_name(GameState.tutorial_next_crop_id())
+			return "Choisis la graine %s en bas pour continuer." % cname2
+		&"accelerate":
+			return "Clique sur la plante pour accélérer sa pousse !"
+		&"harvest":
+			return "C’est prêt ! Clique pour récolter."
+		&"deliver":
+			return "Livre la commande : 1 tomate, 1 carotte, 1 poivron."
+		&"sell":
+			return "Clique sur Stock sous le poivron pour vendre ta graine."
+		&"sell_confirm":
+			return "Appuie sur Vendre pour confirmer la vente."
+		&"missions_tab":
+			return "Ouvre l’onglet Missions pour récupérer ta récompense."
+		&"claim_mission":
+			return "Récupère la récompense de la mission !"
+		&"terrain_edit":
+			return "Nouvelle parcelle ! Clique sur Éditer pour réorganiser ton champ."
+		&"skill_tree":
+			return "Bravo, niveau supérieur ! Ouvre l’arbre de compétences."
+		&"skill_pick_zone":
+			return "Clique sur « Clics en zone », ta première compétence."
+		&"skill_buy_zone":
+			return "Appuie sur Débloquer pour acheter « Clics en zone » !"
+		&"relics_tab":
+			return "Ouvre l’onglet Reliques (3ᵉ menu)."
+		&"relics_explain":
+			var pct := GameState.prestige_points_bonus_pct()
+			return "Tes pts prestige donnent +%d%% or et XP. Améliore ta relique !" % pct
+		_:
+			return ""
+
+
 func _on_tutorial_nudge(kind: StringName) -> void:
 	var changed := kind != _last_tutorial_nudge
 	_last_tutorial_nudge = kind
-	## Une seule ic?ne partout : main + cercle de clic.
+	## Une seule icône partout : main + cercle de clic. Le texte est sur l'épouvantail.
 	const CLICK_ICON := "ui_click_hand"
 	match kind:
 		&"plant":
 			_tutorial_mode = &"plant"
-			var cname := GameState.crop_display_name(GameState.tutorial_next_crop_id())
 			_select_tutorial_seed_if_needed()
-			_show_finger_tutorial("Planter", CLICK_ICON)
-			if changed:
-				_show_toast("Tuto - Plante une %s (parcelle vide)." % cname)
+			_show_finger_tutorial("", CLICK_ICON)
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"switch_seed":
 			_tutorial_mode = &"switch_seed"
-			var cname2 := GameState.crop_display_name(GameState.tutorial_next_crop_id())
-			_show_finger_tutorial("Graine", CLICK_ICON)
-			if changed:
-				_show_toast("Tuto - Change de graine : clique %s en bas." % cname2)
+			_show_finger_tutorial("", CLICK_ICON)
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"accelerate":
 			_tutorial_mode = &"accelerate"
-			_show_finger_tutorial("Augmenter la rapidite", CLICK_ICON)
-			if changed:
-				_show_toast("Tuto - Clique la plante pour augmenter la rapidite.")
+			_show_finger_tutorial("", CLICK_ICON)
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"harvest":
 			_tutorial_mode = &"harvest"
-			_show_finger_tutorial("Recolte", CLICK_ICON)
-			if changed:
-				_show_toast("Tuto - Pret ! Clique pour recolter.")
+			_show_finger_tutorial("", CLICK_ICON)
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"deliver":
 			_tutorial_mode = &"deliver"
-			_show_finger_tutorial("Livrer", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 			if changed:
-				_show_toast("Tuto - Livre la commande (1 tomate, 1 carotte, 1 poivron).")
 				_pulse_deliver_hint()
 		&"sell":
 			_tutorial_mode = &"sell"
 			_select_tutorial_sell_seed()
 			_rebuild_stock()
-			_show_finger_tutorial("Stock", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 90
-			if changed:
-				_show_toast("Tuto - Clique Stock sous le poivron pour vendre.")
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"sell_confirm":
 			_tutorial_mode = &"sell_confirm"
-			_show_finger_tutorial("Vendre", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 300
-			if changed:
-				_show_toast("Tuto - Appuie sur Vendre.")
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"missions_tab":
 			_tutorial_mode = &"missions_tab"
-			_show_finger_tutorial("Missions", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 90
-			if changed:
-				_show_toast("Tuto - Ouvre l'onglet Missions.")
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"claim_mission":
 			_tutorial_mode = &"claim_mission"
-			_show_finger_tutorial("Recuperer", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 90
-			if changed:
-				_show_toast("Tuto - Recupere la recompense de la mission.")
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"terrain_edit":
 			_tutorial_mode = &"terrain_edit"
 			_update_edit_terrain_button()
-			_show_finger_tutorial("Editer", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 95
-			if changed:
-				_show_toast("Tuto - Nouvelle parcelle placee ! Clique Editer pour reorganiser ton champ.")
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"skill_tree":
 			_tutorial_mode = &"skill_tree"
 			_skill_tree_tuto_active = true
-			_show_finger_tutorial("Competences", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 120
-			if changed:
-				_show_toast("Tuto - Tu as gagne un niveau ! Ouvre l'arbre de competences.")
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
+		&"skill_pick_zone":
+			_tutorial_mode = &"skill_pick_zone"
+			_skill_tree_tuto_active = true
+			if _skill_selected_id != "root_hub":
+				call_deferred("_select_skill_node", "root_hub")
+			_show_finger_tutorial("", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 320
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
+		&"skill_buy_zone":
+			_tutorial_mode = &"skill_buy_zone"
+			_skill_tree_tuto_active = true
+			_show_finger_tutorial("", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 320
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"relics_tab":
 			_tutorial_mode = &"relics_tab"
-			_show_finger_tutorial("Reliques", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 95
-			if changed:
-				_show_toast("Tuto - Ouvre l'onglet Reliques (3e menu).")
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"relics_explain":
 			_tutorial_mode = &"relics_explain"
 			if _current_tab != "relics":
 				_select_tab("relics")
 			else:
 				_rebuild_side()
-			_show_finger_tutorial("Ameliorer", CLICK_ICON)
+			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 95
-			if changed:
-				var pct := GameState.prestige_points_bonus_pct()
-				_show_toast(
-					"Tes pts prestige donnent +%d%% or et XP. Ameliore ta relique avec ces points." % pct
-				)
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"tutorial_done":
 			_tutorial_mode = &""
 			_last_tutorial_nudge = &""
 			_clear_finger_tutorial()
+			_hide_scarecrow_guide()
 			_rebuild_stock()
 			_select_tab("boosts")
 		_:
 			_tutorial_mode = &""
 			_clear_finger_tutorial()
+			_hide_scarecrow_guide()
 
 
 func _select_tutorial_sell_seed() -> void:
@@ -2491,8 +2580,10 @@ func _show_finger_tutorial(hint_text: String = "Clic", icon_key: String = "ui_cl
 	_finger_anim = icon
 	_finger_aura = null
 
+	## Le texte tutoriel vit sur l'épouvantail ; le doigt ne garde qu'un libellé court optionnel.
 	var hint := Label.new()
 	hint.text = hint_text
+	hint.visible = not hint_text.is_empty()
 	hint.add_theme_font_size_override("font_size", 11)
 	hint.add_theme_color_override("font_color", Color(0.95, 0.92, 0.35, 1.0))
 	hint.add_theme_color_override("font_outline_color", Color(0.05, 0.08, 0.04, 0.9))
@@ -2628,6 +2719,26 @@ func _snap_finger_to_plot() -> void:
 			anchor = rect.position + rect.size * Vector2(0.35, 0.55)
 			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
 			return
+	elif _tutorial_mode == &"skill_pick_zone":
+		var skill_node := _find_skill_node("root_hub")
+		if skill_node != null and is_instance_valid(skill_node):
+			var rect := skill_node.get_global_rect()
+			anchor = rect.position + rect.size * Vector2(0.55, 0.55)
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
+	elif _tutorial_mode == &"skill_buy_zone":
+		var buy := _find_tut_skill_buy_btn()
+		if buy != null and is_instance_valid(buy):
+			var rect := buy.get_global_rect()
+			anchor = rect.position + rect.size * 0.5
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
+		var skill_node2 := _find_skill_node("root_hub")
+		if skill_node2 != null and is_instance_valid(skill_node2):
+			var rect2 := skill_node2.get_global_rect()
+			anchor = rect2.position + rect2.size * Vector2(0.55, 0.85)
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
 	elif _tutorial_mode == &"relics_tab":
 		var tab_btn := _find_tut_relics_tab_btn()
 		if tab_btn:
@@ -2722,6 +2833,15 @@ func _find_tut_claim_btn() -> Control:
 	return null
 
 
+func _find_tut_skill_buy_btn() -> Control:
+	if _skill_detail == null or not is_instance_valid(_skill_detail):
+		return null
+	var buy := _skill_detail.get_node_or_null("TipCol/TipBuy") as Button
+	if buy != null and is_instance_valid(buy):
+		return buy
+	return null
+
+
 func _clear_finger_tutorial() -> void:
 	if _finger_tutorial and is_instance_valid(_finger_tutorial):
 		_finger_tutorial.queue_free()
@@ -2732,33 +2852,173 @@ func _clear_finger_tutorial() -> void:
 	_finger_plot_index = -1
 
 
+func _ensure_scarecrow_guide() -> void:
+	if _scarecrow_guide != null and is_instance_valid(_scarecrow_guide):
+		return
+	var host := Control.new()
+	host.name = "ScarecrowGuide"
+	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host.z_index = 210
+	host.top_level = true
+	host.custom_minimum_size = Vector2(280, 150)
+	add_child(host)
+	_scarecrow_guide = host
+
+	var row := HBoxContainer.new()
+	row.name = "ScarecrowRow"
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.alignment = BoxContainer.ALIGNMENT_END
+	row.add_theme_constant_override("separation", 6)
+	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	host.add_child(row)
+
+	var bubble := PanelContainer.new()
+	bubble.name = "ScarecrowBubble"
+	bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bubble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	bubble.size_flags_vertical = Control.SIZE_SHRINK_END
+	var bst := StyleBoxFlat.new()
+	bst.bg_color = Color(0.97, 0.93, 0.78, 0.97)
+	bst.border_color = Color(0.42, 0.30, 0.16, 0.95)
+	bst.set_border_width_all(2)
+	bst.set_corner_radius_all(12)
+	bst.content_margin_left = 10
+	bst.content_margin_right = 10
+	bst.content_margin_top = 8
+	bst.content_margin_bottom = 8
+	bst.shadow_color = Color(0, 0, 0, 0.22)
+	bst.shadow_size = 6
+	bubble.add_theme_stylebox_override("panel", bst)
+	row.add_child(bubble)
+
+	var blabel := Label.new()
+	blabel.name = "ScarecrowText"
+	blabel.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	blabel.custom_minimum_size = Vector2(168, 0)
+	blabel.add_theme_font_size_override("font_size", 13)
+	blabel.add_theme_color_override("font_color", Color(0.22, 0.16, 0.10, 1.0))
+	blabel.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.55))
+	blabel.add_theme_constant_override("outline_size", 2)
+	blabel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bubble.add_child(blabel)
+	_scarecrow_label = blabel
+
+	var icon := TextureRect.new()
+	icon.name = "ScarecrowIcon"
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.custom_minimum_size = Vector2(78, 120)
+	icon.size_flags_vertical = Control.SIZE_SHRINK_END
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if _textures.has("ui_scarecrow"):
+		icon.texture = _textures["ui_scarecrow"]
+	row.add_child(icon)
+	_scarecrow_icon = icon
+
+
+func _show_scarecrow_guide(text: String) -> void:
+	if text.is_empty():
+		_hide_scarecrow_guide()
+		return
+	var created := _scarecrow_guide == null or not is_instance_valid(_scarecrow_guide)
+	var prev_text := ""
+	if not created and _scarecrow_label != null and is_instance_valid(_scarecrow_label):
+		prev_text = _scarecrow_label.text
+	_ensure_scarecrow_guide()
+	if _scarecrow_guide == null or not is_instance_valid(_scarecrow_guide):
+		return
+	var was_hidden := not _scarecrow_guide.visible
+	_scarecrow_guide.visible = true
+	if _scarecrow_label != null and is_instance_valid(_scarecrow_label):
+		_scarecrow_label.text = text
+	## Au-dessus de l'arbre pendant le tuto compétences.
+	if (
+		_tutorial_mode == &"skill_pick_zone"
+		or _tutorial_mode == &"skill_buy_zone"
+		or (skill_tree_overlay != null and skill_tree_overlay.visible and _skill_tree_tuto_active)
+	):
+		_scarecrow_guide.z_index = 330
+	else:
+		_scarecrow_guide.z_index = 210
+	_update_scarecrow_guide_position()
+	if created or was_hidden or prev_text != text:
+		_scarecrow_guide.modulate.a = 0.0
+		_scarecrow_guide.scale = Vector2(0.92, 0.92)
+		var tw := create_tween()
+		tw.tween_property(_scarecrow_guide, "modulate:a", 1.0, 0.18)
+		tw.parallel().tween_property(_scarecrow_guide, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _hide_scarecrow_guide() -> void:
+	if _scarecrow_guide != null and is_instance_valid(_scarecrow_guide):
+		_scarecrow_guide.queue_free()
+	_scarecrow_guide = null
+	_scarecrow_label = null
+	_scarecrow_icon = null
+
+
+func _update_scarecrow_guide_position() -> void:
+	if _scarecrow_guide == null or not is_instance_valid(_scarecrow_guide) or not _scarecrow_guide.visible:
+		return
+	var frame := get_node_or_null("%FieldFrame") as Control
+	var rect: Rect2
+	if frame != null and is_instance_valid(frame) and frame.size.x > 8.0:
+		rect = frame.get_global_rect()
+	else:
+		rect = get_viewport_rect()
+	var guide_w := 286.0
+	var guide_h := 138.0
+	_scarecrow_guide.size = Vector2(guide_w, guide_h)
+	_scarecrow_guide.global_position = Vector2(
+		rect.position.x + rect.size.x - guide_w - 8.0,
+		rect.position.y + rect.size.y - guide_h - 6.0
+	)
+
+
 func _update_finger_tutorial(_delta: float) -> void:
 	## Tuto terrain (post-tuto principal) : garder le doigt sur Editer.
 	if _tutorial_mode == &"terrain_edit":
 		if _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
-			_show_finger_tutorial("Editer", "ui_click_hand")
+			_show_finger_tutorial("", "ui_click_hand")
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 95
 		_snap_finger_to_plot()
 		return
-	## Tuto 1er level-up : doigt sur l'arbre de competences.
-	if _tutorial_mode == &"skill_tree" or _skill_tree_tuto_active:
-		if skill_tree_overlay != null and skill_tree_overlay.visible:
-			_skill_tree_tuto_active = false
-			_tutorial_mode = &""
-			_clear_finger_tutorial()
+	## Tuto compétences : bouton arbre → nœud « Clics en zone » → achat.
+	if (
+		_tutorial_mode == &"skill_tree"
+		or _tutorial_mode == &"skill_pick_zone"
+		or _tutorial_mode == &"skill_buy_zone"
+		or _skill_tree_tuto_active
+	):
+		if GameState.get_skill_level("root_hub") >= 1:
+			_finish_skill_tree_tutorial()
 			return
-		if _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
-			_show_finger_tutorial("Competences", "ui_click_hand")
-			if _finger_tutorial:
-				_finger_tutorial.z_index = 120
+		if skill_tree_overlay != null and skill_tree_overlay.visible:
+			var buy := _find_tut_skill_buy_btn()
+			var want_buy := (
+				_skill_selected_id == "root_hub"
+				and buy != null
+				and is_instance_valid(buy)
+				and not buy.disabled
+			)
+			var want_mode: StringName = &"skill_buy_zone" if want_buy else &"skill_pick_zone"
+			if _tutorial_mode != want_mode or _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
+				_on_tutorial_nudge(want_mode)
+				return
+			_snap_finger_to_plot()
+			return
+		## Arbre fermé : re-pointe le bouton compétences.
+		if _tutorial_mode != &"skill_tree" or _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
+			_on_tutorial_nudge(&"skill_tree")
+			return
 		_snap_finger_to_plot()
 		return
 	## Tuto post-1er prestige : onglet Reliques.
 	if _tutorial_mode == &"relics_tab" or _tutorial_mode == &"relics_explain":
 		if _finger_tutorial == null or not is_instance_valid(_finger_tutorial):
-			var label := "Reliques" if _tutorial_mode == &"relics_tab" else "Ameliorer"
-			_show_finger_tutorial(label, "ui_click_hand")
+			_show_finger_tutorial("", "ui_click_hand")
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 95
 		_snap_finger_to_plot()
@@ -2766,8 +3026,11 @@ func _update_finger_tutorial(_delta: float) -> void:
 	if GameState.is_tutorial_done():
 		if _finger_tutorial and is_instance_valid(_finger_tutorial):
 			_clear_finger_tutorial()
+		if _scarecrow_guide and is_instance_valid(_scarecrow_guide):
+			if not _skill_tree_tuto_active and _tutorial_mode == &"":
+				_hide_scarecrow_guide()
 		return
-	## Suit l'?tat r?el (+ modal vente / onglet missions pendant le tuto)
+	## Suit l'état réel (+ modal vente / onglet missions pendant le tuto)
 	var want := _resolve_tutorial_want()
 	if want == &"":
 		return
@@ -5932,9 +6195,17 @@ func _on_skill_detail_buy_pressed() -> void:
 	var sid := _skill_selected_id
 	if GameState.buy_skill(sid):
 		Sfx.play("skill_buy", 0.02, 1.0, 80)
+		var finish_skill_tuto := sid == "root_hub" and (
+			_skill_tree_tuto_active
+			or _tutorial_mode == &"skill_buy_zone"
+			or _tutorial_mode == &"skill_pick_zone"
+		)
 		_rebuild_skill_modal()
 		_refresh_player_hud()
-		call_deferred("_select_skill_node", sid)
+		if finish_skill_tuto:
+			_finish_skill_tree_tutorial()
+		else:
+			call_deferred("_select_skill_node", sid)
 	else:
 		Sfx.ui_deny()
 
@@ -8571,8 +8842,13 @@ func _start_relics_intro_tutorial() -> void:
 		return
 	## Evite un conflit avec un vieux tuto compétences encore actif.
 	_skill_tree_tuto_active = false
-	if _tutorial_mode == &"skill_tree":
+	if (
+		_tutorial_mode == &"skill_tree"
+		or _tutorial_mode == &"skill_pick_zone"
+		or _tutorial_mode == &"skill_buy_zone"
+	):
 		_tutorial_mode = &""
+		_clear_finger_tutorial()
 	_on_tutorial_nudge(&"relics_tab")
 
 
@@ -8582,6 +8858,7 @@ func _complete_relics_intro() -> void:
 	_tutorial_mode = &""
 	_last_tutorial_nudge = &""
 	_clear_finger_tutorial()
+	_hide_scarecrow_guide()
 	_show_toast("Astuce : plus tu as de pts prestige, plus ton or et ton XP grimpent.")
 
 
@@ -8611,6 +8888,17 @@ func _update_next_hint() -> void:
 
 
 func _show_toast(msg: String) -> void:
+	## Les messages « Tuto » passent par l'épouvantail (plus lisible que le toast bas).
+	var trimmed := msg.strip_edges()
+	if trimmed.begins_with("Tuto"):
+		var body := trimmed
+		for prefix in ["Tuto — ", "Tuto - ", "Tuto —", "Tuto -", "Tuto: ", "Tuto:"]:
+			if body.begins_with(prefix):
+				body = body.substr(prefix.length()).strip_edges()
+				break
+		if not body.is_empty():
+			_show_scarecrow_guide(body)
+			return
 	toast_label.text = msg
 	toast_label.modulate = Color(0.55, 0.72, 0.35)
 	var tw := create_tween()
