@@ -412,7 +412,7 @@ window.ceiSafeInsets = function () {
 	let loadDone = false;
 	const loadStartedAt = performance.now();
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
-	const CEI_DEPLOY_ID = '1786189749|96210c2516fa';
+	const CEI_DEPLOY_ID = '1786190668|a533779b1b08';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 20000;
 	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
@@ -531,11 +531,34 @@ window.ceiSafeInsets = function () {
 		}
 	}
 
+	function readSafeInsets() {
+		const probe = document.getElementById('cei-safe-probe');
+		const s = probe ? getComputedStyle(probe) : null;
+		return {
+			l: s ? (parseFloat(s.paddingLeft) || 0) : 0,
+			t: s ? (parseFloat(s.paddingTop) || 0) : 0,
+			r: s ? (parseFloat(s.paddingRight) || 0) : 0,
+			b: s ? (parseFloat(s.paddingBottom) || 0) : 0,
+		};
+	}
+
+	/**
+	 * Boîte physique à couvrir. On prend le max des mesures (vv / inner / client)
+	 * pour éviter la bande noire sous un visualViewport trop petit (Safari iOS).
+	 */
 	function physicalViewportSize() {
 		const vv = window.visualViewport;
+		const vvW = vv ? vv.width : 0;
+		const vvH = vv ? vv.height : 0;
+		const iw = window.innerWidth || 0;
+		const ih = window.innerHeight || 0;
+		const cw = document.documentElement.clientWidth || 0;
+		const ch = document.documentElement.clientHeight || 0;
 		return {
-			w: Math.max(1, Math.round((vv && vv.width) || window.innerWidth || document.documentElement.clientWidth || 1)),
-			h: Math.max(1, Math.round((vv && vv.height) || window.innerHeight || document.documentElement.clientHeight || 1)),
+			w: Math.max(1, Math.round(Math.max(vvW, iw, cw))),
+			h: Math.max(1, Math.round(Math.max(vvH, ih, ch))),
+			offsetX: vv ? Math.round(vv.offsetLeft || 0) : 0,
+			offsetY: vv ? Math.round(vv.offsetTop || 0) : 0,
 		};
 	}
 
@@ -566,25 +589,47 @@ window.ceiSafeInsets = function () {
 			logicW: logicW,
 			logicH: logicH,
 			needsRotate: needsRotate,
+			offsetX: phys.offsetX,
+			offsetY: phys.offsetY,
 		};
 	}
 
-	/** Bandes latérales fixes (notch / island) — mêmes règles en portrait tourné ou vrai paysage. */
-	function fitLandscapeGame(logicW, logicH) {
+	/**
+	 * Même équilibre qu'en vrai paysage : bandes seulement à gauche/droite du jeu,
+	 * hauteur 100 %. En portrait tourné, les insets haut/bas physiques deviennent
+	 * les côtés logiques (symétrisés pour éviter une grosse bande d'un seul côté).
+	 */
+	function fitLandscapeGame(logicW, logicH, needsRotate) {
 		const mobile = isMobileViewport();
 		const minSide = mobile ? 36 : 0;
 		const maxPadX = Math.max(0, Math.floor((logicW - 320) * 0.5));
-		const pad = Math.min(minSide, maxPadX);
-		const x = pad;
+		const safe = readSafeInsets();
+
+		let padL;
+		let padR;
+		if (needsRotate) {
+			/* rotate(90deg) CW : bas physique → gauche jeu, haut physique → droite jeu */
+			const rawL = Math.max(safe.b, minSide);
+			const rawR = Math.max(safe.t, minSide);
+			/* Symétrique comme en paysage (évite bande bas >> bande haut). */
+			const side = Math.min(maxPadX, Math.max(rawL, rawR));
+			padL = side;
+			padR = side;
+		} else {
+			padL = Math.min(maxPadX, Math.max(safe.l, minSide));
+			padR = Math.min(maxPadX, Math.max(safe.r, minSide));
+		}
+
+		const x = Math.round(padL);
 		const y = 0;
-		const w = Math.max(1, logicW - pad * 2);
-		const h = Math.max(1, logicH);
+		const w = Math.max(1, Math.round(logicW - padL - padR));
+		const h = Math.max(1, Math.round(logicH));
 		return {
 			x: x,
 			y: y,
 			w: w,
 			h: h,
-			pads: { l: x, t: 0, r: pad, b: 0 },
+			pads: { l: x, t: 0, r: Math.round(padR), b: 0 },
 		};
 	}
 
@@ -607,19 +652,23 @@ window.ceiSafeInsets = function () {
 
 		document.documentElement.classList.toggle('cei-portrait', m.needsRotate);
 		document.body.classList.toggle('cei-portrait', m.needsRotate);
-		/* Le document reste sur la taille physique ; seul le shell est en paysage logique. */
-		document.documentElement.style.width = m.physW + 'px';
-		document.documentElement.style.height = m.physH + 'px';
-		document.body.style.width = m.physW + 'px';
-		document.body.style.height = m.physH + 'px';
+		/*
+		 * Ne pas réduire html/body à visualViewport (souvent < 100dvh) :
+		 * ça laissait une bande noire sous le shell en portrait.
+		 * On garde le CSS 100dvh et on couvre avec le shell.
+		 */
+		document.documentElement.style.width = '';
+		document.documentElement.style.height = '';
+		document.body.style.width = '';
+		document.body.style.height = '';
 
 		if (!shell) {
 			lockLandscape();
 			return;
 		}
 		shell.style.position = 'fixed';
-		shell.style.top = '0px';
-		shell.style.left = '0px';
+		shell.style.top = m.offsetY + 'px';
+		shell.style.left = m.offsetX + 'px';
 		shell.style.right = 'auto';
 		shell.style.bottom = 'auto';
 		shell.style.margin = '0';
@@ -634,7 +683,7 @@ window.ceiSafeInsets = function () {
 			shell.style.transform = 'none';
 		}
 
-		const box = fitLandscapeGame(m.logicW, m.logicH);
+		const box = fitLandscapeGame(m.logicW, m.logicH, m.needsRotate);
 		window.ceiLayoutPads = box.pads;
 		if (game) {
 			game.style.left = box.x + 'px';
