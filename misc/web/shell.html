@@ -420,9 +420,11 @@ window.ceiSafeInsets = function () {
 	const loadStartedAt = performance.now();
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
 	const CEI_DEPLOY_ID = 'dev';
+	/* Incrémenter pour forcer un hard-refresh PWA après un fix shell layout. */
+	const CEI_LAYOUT_VER = 'portrait-pad-v4';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 20000;
-	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
+	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + CEI_LAYOUT_VER + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
 
 	/** Purge SW + Cache Storage puis recharge (une seule fois par onglet). */
 	async function ceiHardRefresh(reason) {
@@ -617,10 +619,14 @@ window.ceiSafeInsets = function () {
 		let padL;
 		let padR;
 		if (needsRotate) {
-			/* Même confort que les côtés en paysage (28), + safe-area sans sur-marge. */
-			const comfort = minSide;
-			padL = Math.min(maxPadX, Math.max(comfort, safe.t));
-			padR = Math.min(maxPadX, Math.max(comfort, safe.b));
+			/*
+			 * Objectif : mêmes bandes ~28 px qu’en paysage sur les côtés.
+			 * - Bas : strictement minSide (safe.b en bande noire était trop large ;
+			 *   le home indicator reste un overlay semi-transparent).
+			 * - Haut : notch plafonné pour ne pas créer une grosse barre.
+			 */
+			padL = Math.min(maxPadX, Math.max(minSide, Math.min(safe.t || 0, 34)));
+			padR = Math.min(maxPadX, minSide);
 		} else {
 			padL = Math.min(maxPadX, Math.max(safe.l, minSide));
 			padR = Math.min(maxPadX, Math.max(safe.r, minSide));
