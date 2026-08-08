@@ -36,6 +36,9 @@ jobs:
           cp -f web_export/crops_express_idle.html web_export/index.html
           grep -q "skipWaiting" web_export/crops_express_idle.service.worker.js
           grep -q "CEI_DEPLOY_ID" web_export/crops_express_idle.html
+          grep -q "cei-version.json" web_export/crops_express_idle.service.worker.js
+          test -f web_export/cei-version.json
+          grep -q "deploy_id" web_export/cei-version.json
           echo "PWA patch OK"
 
       - name: Prepare site from web_export/

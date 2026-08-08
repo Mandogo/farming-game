@@ -104,9 +104,10 @@ def _patch_sw(version: str) -> None:
 	}).then(function () {
 		return self.clients.claim();
 	}).then(function () {
-		// Force les PWA / onglets déjà ouverts à recharger (HTML neuf).
+		// iOS PWA : navigate() est souvent ignoré → postMessage + reload côté page.
 		return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (all) {
 			return Promise.all(all.map(function (c) {
+				try { c.postMessage({ type: 'cei-reload', v: CACHE_VERSION }); } catch (e1) {}
 				try { return c.navigate(c.url); } catch (e) { return undefined; }
 			}));
 		});
@@ -140,7 +141,21 @@ def _patch_sw(version: str) -> None:
 		})();
 		const isHtmlOrJs = /\.(html|js)$/i.test(pathName) || pathName === '' || pathName === 'index.html';
 		const isHeavyAsset = /\.(wasm|pck)$/i.test(pathName);
+		const isVersionProbe = pathName === 'cei-version.json';
+		const isSwFile = /service\.worker\.js$/i.test(pathName);
 		const isCacheable = FULL_CACHE.some((v) => v === local || v === pathName) || (base === referrer && base.endsWith(CACHED_FILES[0]));
+
+		// Version + SW : jamais depuis Cache API (sinon PWA iOS reste coincée).
+		if (isVersionProbe || isSwFile) {
+			event.respondWith((async () => {
+				let response = await fetch(event.request, { cache: 'no-store' });
+				if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
+					response = ensureCrossOriginIsolationHeaders(response);
+				}
+				return response;
+			})());
+			return;
+		}
 
 		// Navigations + HTML/JS : network-first (évite HTML neuf + JS/WASM vieux).
 		if (isNavigate || isHtmlOrJs) {
@@ -286,10 +301,30 @@ def _stamp_html(deploy_id: str) -> None:
 	print(f"Stamped CEI_DEPLOY_ID={deploy_id} → {HTML_MAIN.name} + {HTML_INDEX.name}")
 
 
+def _write_version_json(deploy_id: str) -> None:
+	"""Fichier léger toujours network-only — permet à la PWA de détecter un nouveau build."""
+	import json
+
+	path = WEB / "cei-version.json"
+	path.write_text(
+		json.dumps(
+			{
+				"deploy_id": deploy_id,
+				"ts": int(time.time()),
+			},
+			separators=(",", ":"),
+		)
+		+ "\n",
+		encoding="utf-8",
+	)
+	print(f"Wrote {path.name} deploy_id={deploy_id}")
+
+
 def patch() -> None:
 	deploy_id = _deploy_id()
 	_patch_sw(deploy_id)
 	_stamp_html(deploy_id)
+	_write_version_json(deploy_id)
 
 
 if __name__ == "__main__":

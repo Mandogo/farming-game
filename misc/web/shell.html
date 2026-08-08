@@ -421,19 +421,26 @@ window.ceiSafeInsets = function () {
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
 	const CEI_DEPLOY_ID = 'dev';
 	/* Incrémenter pour forcer un hard-refresh PWA après un fix shell layout. */
-	const CEI_LAYOUT_VER = 'portrait-pad-v4';
+	const CEI_LAYOUT_VER = 'pwa-force-v5';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 20000;
 	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + CEI_LAYOUT_VER + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
+	let ceiRefreshing = false;
 
-	/** Purge SW + Cache Storage puis recharge (une seule fois par onglet). */
-	async function ceiHardRefresh(reason) {
-		console.warn('[CEI] Hard refresh:', reason);
-		if (sessionStorage.getItem('cei_hard_refresh') === '1') {
-			sessionStorage.removeItem('cei_hard_refresh');
-			return false;
-		}
-		sessionStorage.setItem('cei_hard_refresh', '1');
+	/** Purge SW + Cache Storage puis recharge (anti-boucle par cible). */
+	async function ceiHardRefresh(reason, toId) {
+		if (ceiRefreshing) return true;
+		const target = String(toId || CEI_DEPLOY_ID || reason || 'x');
+		const guardKey = 'cei_hr_' + target;
+		console.warn('[CEI] Hard refresh:', reason, '→', target);
+		try {
+			if (sessionStorage.getItem(guardKey) === '1') {
+				/* Déjà tenté pour cette cible dans cet onglet — évite une boucle. */
+				return false;
+			}
+			sessionStorage.setItem(guardKey, '1');
+		} catch (e0) { /* private mode */ }
+		ceiRefreshing = true;
 		try {
 			if ('serviceWorker' in navigator) {
 				const regs = await navigator.serviceWorker.getRegistrations();
@@ -448,21 +455,66 @@ window.ceiSafeInsets = function () {
 		}
 		const url = new URL(window.location.href);
 		url.searchParams.set('cei_cb', String(Date.now()));
+		url.searchParams.set('cei_v', target.slice(0, 24));
 		window.location.replace(url.toString());
 		return true;
 	}
 
-	/** Nouveau build / shell détecté → invalide les caches PWA. */
+	/** Nouveau BUILD_ID local (HTML) vs dernier connu → purge. */
 	async function ceiCheckBuildDrift() {
 		try {
 			const prev = localStorage.getItem('cei_build_id') || '';
 			if (prev && prev !== BUILD_ID) {
 				localStorage.setItem('cei_build_id', BUILD_ID);
-				return ceiHardRefresh('build_id_changed');
+				return ceiHardRefresh('build_id_changed', CEI_DEPLOY_ID);
 			}
 			localStorage.setItem('cei_build_id', BUILD_ID);
 		} catch (e) { /* private mode */ }
 		return false;
+	}
+
+	/**
+	 * Sonde réseau (cei-version.json, no-store) — marche même si le SW HTML est vieux,
+	 * tant que le fetch n’est pas servi depuis le Cache API.
+	 */
+	async function ceiProbeRemoteVersion() {
+		try {
+			const url = new URL('cei-version.json', window.location.href);
+			url.searchParams.set('t', String(Date.now()));
+			const res = await fetch(url.toString(), {
+				cache: 'no-store',
+				credentials: 'same-origin',
+				headers: { 'Cache-Control': 'no-cache' },
+			});
+			if (!res.ok) return false;
+			const data = await res.json();
+			const remote = String((data && (data.deploy_id || data.id)) || '');
+			if (remote && remote !== String(CEI_DEPLOY_ID)) {
+				console.warn('[CEI] Version drift remote=', remote, 'local=', CEI_DEPLOY_ID);
+				return ceiHardRefresh('remote_version_drift', remote);
+			}
+		} catch (e) {
+			console.warn('[CEI] version probe failed', e);
+		}
+		return false;
+	}
+
+	/** Ré-enregistre le SW avec ?cei= + updateViaCache:none (crucial iOS). */
+	async function ceiReregisterServiceWorker() {
+		if (!('serviceWorker' in navigator)) return null;
+		const swFile = (GODOT_CONFIG && GODOT_CONFIG.serviceWorker)
+			? String(GODOT_CONFIG.serviceWorker)
+			: 'crops_express_idle.service.worker.js';
+		const swUrl = swFile + (swFile.indexOf('?') >= 0 ? '&' : '?')
+			+ 'cei=' + encodeURIComponent(String(CEI_DEPLOY_ID));
+		try {
+			const reg = await navigator.serviceWorker.register(swUrl, { updateViaCache: 'none' });
+			try { await reg.update(); } catch (e1) {}
+			return reg;
+		} catch (e) {
+			console.warn('[CEI] SW re-register failed', e);
+			return null;
+		}
 	}
 
 	/** Active tout nouveau SW immédiatement + reload (PWA comprise). */
@@ -470,11 +522,21 @@ window.ceiSafeInsets = function () {
 		if (!('serviceWorker' in navigator)) return;
 		let reloading = false;
 		function reloadOnce() {
-			if (reloading) return;
+			if (reloading || ceiRefreshing) return;
 			reloading = true;
 			window.location.reload();
 		}
 		navigator.serviceWorker.addEventListener('controllerchange', reloadOnce);
+		navigator.serviceWorker.addEventListener('message', function (ev) {
+			const d = ev && ev.data ? ev.data : null;
+			if (!d || d.type !== 'cei-reload') return;
+			const remote = String(d.v || '');
+			if (remote && remote !== String(CEI_DEPLOY_ID)) {
+				ceiHardRefresh('sw_message', remote);
+			} else {
+				reloadOnce();
+			}
+		});
 		function kick(reg) {
 			if (!reg) return;
 			if (reg.waiting) {
@@ -491,16 +553,18 @@ window.ceiSafeInsets = function () {
 			}
 			reg.update().catch(function () {});
 		}
-		navigator.serviceWorker.ready.then(kick).catch(function () {});
-		navigator.serviceWorker.getRegistration().then(kick).catch(function () {});
-		document.addEventListener('visibilitychange', function () {
-			if (!document.hidden) {
-				navigator.serviceWorker.getRegistration().then(kick).catch(function () {});
-			}
-		});
-		setInterval(function () {
+		function refreshTick() {
+			ceiProbeRemoteVersion();
+			ceiReregisterServiceWorker().then(kick).catch(function () {});
 			navigator.serviceWorker.getRegistration().then(kick).catch(function () {});
-		}, 30000);
+		}
+		navigator.serviceWorker.ready.then(kick).catch(function () {});
+		refreshTick();
+		document.addEventListener('visibilitychange', function () {
+			if (!document.hidden) refreshTick();
+		});
+		window.addEventListener('focus', refreshTick);
+		setInterval(refreshTick, 20000);
 	}
 
 	ceiWatchServiceWorker();
@@ -865,12 +929,13 @@ window.ceiSafeInsets = function () {
 	});
 
 	async function ceiStartGame() {
-		const refreshed = await ceiCheckBuildDrift();
-		if (refreshed) return;
+		if (await ceiProbeRemoteVersion()) return;
+		if (await ceiCheckBuildDrift()) return;
+		await ceiReregisterServiceWorker();
 
 		setTimeout(function () {
 			if (!loadDone && initializing) {
-				ceiHardRefresh('load_watchdog_timeout');
+				ceiHardRefresh('load_watchdog_timeout', CEI_DEPLOY_ID);
 			}
 		}, LOAD_WATCHDOG_MS);
 
@@ -890,6 +955,8 @@ window.ceiSafeInsets = function () {
 			setStatusMode('hidden');
 			/* Ré-applique DPR après init Godot (souvent réécrit canvas.width). */
 			enforceCanvasDpr(8, 120);
+			ceiReregisterServiceWorker();
+			ceiProbeRemoteVersion();
 		}, displayFailureNotice);
 	}
 
