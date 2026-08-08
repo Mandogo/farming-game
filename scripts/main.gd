@@ -2394,6 +2394,10 @@ func _scarecrow_text_for(kind: StringName) -> String:
 			return "Ouvre l’onglet Missions."
 		&"claim_mission":
 			return "Récupère ta récompense !"
+		&"buy_plot":
+			return "Achète une nouvelle parcelle !"
+		&"boosts_tab":
+			return "Ouvre l’onglet Amélios."
 		&"terrain_edit":
 			return "Nouvelle parcelle — clique Éditer."
 		&"skill_tree":
@@ -2465,6 +2469,22 @@ func _on_tutorial_nudge(kind: StringName) -> void:
 			_show_finger_tutorial("", CLICK_ICON)
 			if _finger_tutorial:
 				_finger_tutorial.z_index = 90
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
+		&"boosts_tab":
+			_tutorial_mode = &"boosts_tab"
+			_show_finger_tutorial("", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 95
+			_show_scarecrow_guide(_scarecrow_text_for(kind))
+		&"buy_plot":
+			_tutorial_mode = &"buy_plot"
+			if _current_tab != "boosts":
+				_select_tab("boosts")
+			else:
+				_rebuild_side()
+			_show_finger_tutorial("", CLICK_ICON)
+			if _finger_tutorial:
+				_finger_tutorial.z_index = 95
 			_show_scarecrow_guide(_scarecrow_text_for(kind))
 		&"terrain_edit":
 			_tutorial_mode = &"terrain_edit"
@@ -2707,6 +2727,20 @@ func _snap_finger_to_plot() -> void:
 			anchor = rect.position + rect.size * 0.5
 			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
 			return
+	elif _tutorial_mode == &"boosts_tab":
+		var boosts_tab := _find_tut_boosts_tab_btn()
+		if boosts_tab:
+			var rect := boosts_tab.get_global_rect()
+			anchor = rect.position + rect.size * 0.5
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
+	elif _tutorial_mode == &"buy_plot":
+		var plot_buy := _find_tut_plot_buy_btn()
+		if plot_buy:
+			var rect := plot_buy.get_global_rect()
+			anchor = rect.position + rect.size * 0.5
+			_finger_tutorial.global_position = _finger_anchor_to_global(anchor)
+			return
 	elif _tutorial_mode == &"terrain_edit":
 		if _edit_terrain_btn != null and is_instance_valid(_edit_terrain_btn) and _edit_terrain_btn.visible:
 			var rect := _edit_terrain_btn.get_global_rect()
@@ -2804,6 +2838,23 @@ func _find_tut_missions_tab_btn() -> Control:
 		var b: Variant = _tab_buttons["missions"]
 		if b is Control and is_instance_valid(b):
 			return b as Control
+	return null
+
+
+func _find_tut_boosts_tab_btn() -> Control:
+	if _tab_buttons.has("boosts"):
+		var b: Variant = _tab_buttons["boosts"]
+		if b is Control and is_instance_valid(b):
+			return b as Control
+	return null
+
+
+func _find_tut_plot_buy_btn() -> Control:
+	if side_content == null:
+		return null
+	for n in side_content.find_children("*", "Control", true, false):
+		if n.has_meta("tut_plot_buy"):
+			return n as Control
 	return null
 
 
@@ -3106,6 +3157,8 @@ func _resolve_tutorial_want() -> StringName:
 		return &"sell_confirm"
 	if want == &"missions_tab" and _current_tab == "missions":
 		return &"claim_mission"
+	if want == &"buy_plot" and _current_tab != "boosts":
+		return &"boosts_tab"
 	return want
 
 
@@ -5719,6 +5772,11 @@ func _shop_row(
 			buy.add_theme_stylebox_override("panel", bn)
 		)
 	root.add_child(buy)
+	if boost_id != "":
+		panel.set_meta("boost_id", boost_id)
+	if boost_id == "plot":
+		buy.set_meta("tut_plot_buy", true)
+		panel.set_meta("tut_plot_row", true)
 
 	return panel
 

@@ -383,7 +383,7 @@ body.cei-portrait {
 
 		<script src="crops_express_idle.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":12798652,"crops_express_idle.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":12800092,"crops_express_idle.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 /* Adaptive(=2) suit window.inner* (portrait) alors que le CSS est tourné → stretch. */
 const CEI_SW_FILE = (GODOT_CONFIG && GODOT_CONFIG.serviceWorker)
@@ -405,6 +405,47 @@ window.ceiLayoutPads = { l: 0, t: 0, r: 0, b: 0 };
 
 /** Taille logique paysage courante (toujours w ≥ h). */
 window.ceiLandscapeSize = { w: 1, h: 1 };
+
+/** Métadonnées layout pour remap des clics (portrait CSS-rotaté → coords paysage). */
+window.ceiLayoutMeta = {
+	needsRotate: false,
+	physW: 1,
+	physH: 1,
+	ox: 0,
+	oy: 0,
+	boxX: 0,
+	boxY: 0,
+	gameW: 1,
+	gameH: 1,
+};
+
+/**
+ * Convertit clientX/Y (écran) → coords buffer canvas Godot (espace paysage).
+ * Indispensable en portrait : getBoundingClientRect AABB ne gère pas rotate(90deg).
+ */
+window.ceiScreenToCanvas = function (clientX, clientY) {
+	const canvas = document.getElementById('canvas');
+	const meta = window.ceiLayoutMeta;
+	if (!canvas || !meta) return null;
+	const shell = document.getElementById('cei-shell') || document.body;
+	const shellRect = shell.getBoundingClientRect();
+	const sx = clientX - shellRect.left;
+	const sy = clientY - shellRect.top;
+	let lx;
+	let ly;
+	if (meta.needsRotate) {
+		/* Inverse de : translate(physW,0) rotate(90deg) translate(ox,oy)
+		 * sx = physW - ly - oy ; sy = lx + ox */
+		lx = sy - meta.ox;
+		ly = meta.physW - meta.oy - sx;
+	} else {
+		lx = sx - meta.boxX;
+		ly = sy - meta.boxY;
+	}
+	const gw = Math.max(1, meta.gameW);
+	const gh = Math.max(1, meta.gameH);
+	return [lx * (canvas.width / gw), ly * (canvas.height / gh)];
+};
 
 /** Insets restants DANS le cadre jeu — toujours en coords paysage (pas de remap portrait). */
 window.ceiSafeInsets = function () {
@@ -431,9 +472,9 @@ window.ceiSafeInsets = function () {
 	let loadDone = false;
 	const loadStartedAt = performance.now();
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
-	const CEI_DEPLOY_ID = '1786209138|54e38d9fa166';
+	const CEI_DEPLOY_ID = '1786211088|9dc139a997c5';
 	/* Incrémenter pour forcer un hard-refresh PWA après un fix shell layout. */
-	const CEI_LAYOUT_VER = 'pwa-noloop-v6';
+	const CEI_LAYOUT_VER = 'portrait-input-v7';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 45000;
 	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + (typeof CEI_LAYOUT_VER !== 'undefined' ? CEI_LAYOUT_VER + '|' : '') + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
@@ -796,6 +837,19 @@ window.ceiSafeInsets = function () {
 
 		const box = fitLandscapeGame(logicW, logicH, needsRotate);
 		window.ceiLayoutPads = box.pads;
+		const ox = Math.round(box.x);
+		const oy = Math.round(box.y);
+		window.ceiLayoutMeta = {
+			needsRotate: needsRotate,
+			physW: physW,
+			physH: physH,
+			ox: ox,
+			oy: oy,
+			boxX: needsRotate ? 0 : ox,
+			boxY: 0,
+			gameW: box.w,
+			gameH: box.h,
+		};
 		window.ceiLayoutDebug = {
 			physW: physW,
 			physH: physH,
@@ -828,8 +882,6 @@ window.ceiSafeInsets = function () {
 				 * Stage calé sur la boîte réelle du shell (physW×physH).
 				 * translate(physW) + rotate(90) : droite logique → bas physique.
 				 */
-				const ox = Math.round(box.x);
-				const oy = Math.round(box.y);
 				game.style.transform = 'translate(' + physW + 'px, 0px) rotate(90deg) translate(' + ox + 'px, ' + oy + 'px)';
 			} else {
 				game.style.left = box.x + 'px';
