@@ -471,7 +471,7 @@ window.ceiSafeInsets = function () {
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
 	const CEI_DEPLOY_ID = 'dev';
 	/* Incrémenter pour forcer un hard-refresh PWA après un fix shell layout. */
-	const CEI_LAYOUT_VER = 'portrait-input-v7';
+	const CEI_LAYOUT_VER = 'portrait-pad-v8';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 45000;
 	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + CEI_LAYOUT_VER + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
@@ -726,8 +726,9 @@ window.ceiSafeInsets = function () {
 	 * Bandes seulement sur les bords gauche/droite du jeu paysage.
 	 * Portrait + rotate(90deg) CW (y vers le bas) :
 	 *   gauche logique → haut physique (notch) ; droite logique → bas physique (home).
-	 * Le bas ne doit PAS être plus large que les bandes latérales du vrai paysage :
-	 * on prend le même « comfort » (minSide) et on n’ajoute que l’éventuel extra safe-area.
+	 * En vrai paysage il n’y a PAS de marge basse : le jeu colle haut/bas.
+	 * Donc en portrait on ne met PAS de bande noire en bas (padR=0) — le home
+	 * indicator reste un overlay ; sinon la barre bas « disparaît » en paysage.
 	 */
 	function fitLandscapeGame(logicW, logicH, needsRotate, safeOverrides) {
 		const mobile = isMobileViewport();
@@ -739,13 +740,12 @@ window.ceiSafeInsets = function () {
 		let padR;
 		if (needsRotate) {
 			/*
-			 * Objectif : mêmes bandes ~28 px qu’en paysage sur les côtés.
-			 * - Bas : strictement minSide (safe.b en bande noire était trop large ;
-			 *   le home indicator reste un overlay semi-transparent).
-			 * - Haut : notch plafonné pour ne pas créer une grosse barre.
+			 * Haut (notch) : safe-area plafonnée, petit comfort min.
+			 * Bas : 0 — plein bord comme le paysage (plus de grosse marge noire).
 			 */
-			padL = Math.min(maxPadX, Math.max(minSide, Math.min(safe.t || 0, 34)));
-			padR = Math.min(maxPadX, minSide);
+			const notch = Math.min(safe.t || 0, 47);
+			padL = Math.min(maxPadX, Math.max(mobile ? 10 : 0, notch));
+			padR = 0;
 		} else {
 			padL = Math.min(maxPadX, Math.max(safe.l, minSide));
 			padR = Math.min(maxPadX, Math.max(safe.r, minSide));
@@ -822,8 +822,21 @@ window.ceiSafeInsets = function () {
 		 */
 		void shell.offsetWidth;
 		const fallback = physicalViewportSize();
-		const physW = Math.max(1, shell.clientWidth || Math.round(shell.getBoundingClientRect().width) || fallback.w);
-		const physH = Math.max(1, shell.clientHeight || Math.round(shell.getBoundingClientRect().height) || fallback.h);
+		const shellRect = shell.getBoundingClientRect();
+		/*
+		 * Prendre le MAX shell / vv / inner : si le shell (100dvh) est plus petit
+		 * que la zone peinte, une bande noire reste sous le stage en portrait.
+		 */
+		const physW = Math.max(1, Math.round(Math.max(
+			shell.clientWidth || 0,
+			shellRect.width || 0,
+			fallback.w
+		)));
+		const physH = Math.max(1, Math.round(Math.max(
+			shell.clientHeight || 0,
+			shellRect.height || 0,
+			fallback.h
+		)));
 		const needsRotate = physH > physW;
 		const logicW = Math.max(physW, physH);
 		const logicH = Math.min(physW, physH);
@@ -876,14 +889,21 @@ window.ceiSafeInsets = function () {
 
 			if (needsRotate) {
 				/*
-				 * Stage calé sur la boîte réelle du shell (physW×physH).
+				 * Stage calé sur physW×physH (max shell/vv).
 				 * translate(physW) + rotate(90) : droite logique → bas physique.
+				 * padR=0 → le bord bas physique = bas du stage (pas de bande noire).
 				 */
 				game.style.transform = 'translate(' + physW + 'px, 0px) rotate(90deg) translate(' + ox + 'px, ' + oy + 'px)';
+				/* Sécurité : le shell couvre au moins la zone utilisée. */
+				shell.style.width = physW + 'px';
+				shell.style.height = physH + 'px';
 			} else {
 				game.style.left = box.x + 'px';
 				game.style.top = '0';
 				game.style.transform = 'translateZ(0)';
+				shell.style.width = '100%';
+				shell.style.height = '100%';
+				shell.style.height = '100dvh';
 			}
 		}
 		sizeGameCanvas(canvas, box.w, box.h);
