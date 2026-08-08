@@ -95,20 +95,26 @@ def _patch_sw(version: str) -> None:
 	activate_block = """self.addEventListener('activate', (event) => {
 	event.waitUntil(caches.keys().then(
 		function (keys) {
-			// Remove old caches.
-			return Promise.all(keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME).map((key) => caches.delete(key)));
+			// Remove old caches. Only notify clients when this is a real update
+			// (old cache present) — otherwise first install + claim reloads forever.
+			var oldKeys = keys.filter((key) => key.startsWith(CACHE_PREFIX) && key !== CACHE_NAME);
+			var isUpdate = oldKeys.length > 0;
+			return Promise.all(oldKeys.map((key) => caches.delete(key))).then(function () {
+				return isUpdate;
+			});
 		}
-	).then(function () {
+	).then(function (isUpdate) {
 		// Enable navigation preload if available.
-		return ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
-	}).then(function () {
-		return self.clients.claim();
-	}).then(function () {
-		// iOS PWA : navigate() est souvent ignoré → postMessage + reload côté page.
+		var preload = ('navigationPreload' in self.registration) ? self.registration.navigationPreload.enable() : Promise.resolve();
+		return preload.then(function () { return isUpdate; });
+	}).then(function (isUpdate) {
+		return self.clients.claim().then(function () { return isUpdate; });
+	}).then(function (isUpdate) {
+		if (!isUpdate) return;
+		// Vraie mise à jour : prévenir la page (elle hard-refresh si deploy_id diffère).
 		return self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (all) {
 			return Promise.all(all.map(function (c) {
 				try { c.postMessage({ type: 'cei-reload', v: CACHE_VERSION }); } catch (e1) {}
-				try { return c.navigate(c.url); } catch (e) { return undefined; }
 			}));
 		});
 	}));
@@ -244,6 +250,37 @@ def _patch_sw(version: str) -> None:
 	)
 	if n != 1:
 		raise SystemExit("Failed to patch fetch handler in service worker")
+	text = text2
+
+	# Godot message 'update' faisait clients.navigate() → reload en boucle avec notre shell.
+	message_block = """self.addEventListener('message', (event) => {
+	// No cross origin
+	if (event.origin !== self.origin) {
+		return;
+	}
+	const id = event.source.id || '';
+	const msg = event.data || '';
+	// Ensure it's one of our clients.
+	self.clients.get(id).then(function (client) {
+		if (!client) {
+			return; // Not a valid client.
+		}
+		if (msg === 'claim' || msg === 'update') {
+			self.skipWaiting().then(() => self.clients.claim());
+		} else if (msg === 'clear') {
+			caches.delete(CACHE_NAME);
+		}
+	});
+});
+"""
+	text2, n = re.subn(
+		r"self\.addEventListener\('message',\s*\(event\)\s*=>\s*\{[\s\S]*?\n\}\);\s*$",
+		message_block,
+		text,
+		count=1,
+	)
+	if n != 1:
+		raise SystemExit("Failed to patch message handler in service worker")
 	text = text2
 
 	SW_PATH.write_text(text, encoding="utf-8")
