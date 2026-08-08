@@ -2860,41 +2860,72 @@ func _ensure_scarecrow_guide() -> void:
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	host.z_index = 210
 	host.top_level = true
-	host.custom_minimum_size = Vector2(280, 150)
+	host.custom_minimum_size = Vector2(300, 160)
 	add_child(host)
 	_scarecrow_guide = host
 
-	var row := HBoxContainer.new()
-	row.name = "ScarecrowRow"
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.alignment = BoxContainer.ALIGNMENT_END
-	row.add_theme_constant_override("separation", 6)
-	row.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	host.add_child(row)
+	## Épouvantail à droite (ancré en bas).
+	var icon := TextureRect.new()
+	icon.name = "ScarecrowIcon"
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	icon.custom_minimum_size = Vector2(84, 128)
+	icon.size = Vector2(84, 128)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+	if _textures.has("ui_scarecrow"):
+		icon.texture = _textures["ui_scarecrow"]
+	host.add_child(icon)
+	_scarecrow_icon = icon
+
+	## Bulle libre (pas un HBox) pour la placer à hauteur de la bouche.
+	var bubble_root := Control.new()
+	bubble_root.name = "ScarecrowBubbleRoot"
+	bubble_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	host.add_child(bubble_root)
+
+	## Queue / triangle (contour puis remplissage) — pointe vers la bouche.
+	var tail_outline := Polygon2D.new()
+	tail_outline.name = "ScarecrowTailOutline"
+	tail_outline.color = Color(0.42, 0.30, 0.16, 0.95)
+	tail_outline.polygon = PackedVector2Array([
+		Vector2(0, 1),
+		Vector2(16, 9),
+		Vector2(0, 17),
+	])
+	bubble_root.add_child(tail_outline)
+
+	var tail := Polygon2D.new()
+	tail.name = "ScarecrowTail"
+	tail.color = Color(0.97, 0.93, 0.78, 0.97)
+	tail.polygon = PackedVector2Array([
+		Vector2(1, 3),
+		Vector2(13, 9),
+		Vector2(1, 15),
+	])
+	bubble_root.add_child(tail)
 
 	var bubble := PanelContainer.new()
 	bubble.name = "ScarecrowBubble"
 	bubble.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bubble.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	bubble.size_flags_vertical = Control.SIZE_SHRINK_END
 	var bst := StyleBoxFlat.new()
 	bst.bg_color = Color(0.97, 0.93, 0.78, 0.97)
 	bst.border_color = Color(0.42, 0.30, 0.16, 0.95)
 	bst.set_border_width_all(2)
-	bst.set_corner_radius_all(12)
-	bst.content_margin_left = 10
-	bst.content_margin_right = 10
-	bst.content_margin_top = 8
-	bst.content_margin_bottom = 8
+	bst.set_corner_radius_all(14)
+	bst.content_margin_left = 12
+	bst.content_margin_right = 12
+	bst.content_margin_top = 10
+	bst.content_margin_bottom = 10
 	bst.shadow_color = Color(0, 0, 0, 0.22)
 	bst.shadow_size = 6
 	bubble.add_theme_stylebox_override("panel", bst)
-	row.add_child(bubble)
+	bubble_root.add_child(bubble)
 
 	var blabel := Label.new()
 	blabel.name = "ScarecrowText"
 	blabel.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	blabel.custom_minimum_size = Vector2(168, 0)
+	blabel.custom_minimum_size = Vector2(172, 0)
 	blabel.add_theme_font_size_override("font_size", 13)
 	blabel.add_theme_color_override("font_color", Color(0.22, 0.16, 0.10, 1.0))
 	blabel.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.55))
@@ -2902,19 +2933,6 @@ func _ensure_scarecrow_guide() -> void:
 	blabel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bubble.add_child(blabel)
 	_scarecrow_label = blabel
-
-	var icon := TextureRect.new()
-	icon.name = "ScarecrowIcon"
-	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.custom_minimum_size = Vector2(78, 120)
-	icon.size_flags_vertical = Control.SIZE_SHRINK_END
-	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	if _textures.has("ui_scarecrow"):
-		icon.texture = _textures["ui_scarecrow"]
-	row.add_child(icon)
-	_scarecrow_icon = icon
 
 
 func _show_scarecrow_guide(text: String) -> void:
@@ -2967,13 +2985,42 @@ func _update_scarecrow_guide_position() -> void:
 		rect = frame.get_global_rect()
 	else:
 		rect = get_viewport_rect()
-	var guide_w := 286.0
-	var guide_h := 138.0
+	var guide_w := 304.0
+	var guide_h := 156.0
+	var icon_w := 84.0
+	var icon_h := 128.0
 	_scarecrow_guide.size = Vector2(guide_w, guide_h)
+	_scarecrow_guide.pivot_offset = Vector2(guide_w, guide_h)
 	_scarecrow_guide.global_position = Vector2(
-		rect.position.x + rect.size.x - guide_w - 8.0,
-		rect.position.y + rect.size.y - guide_h - 6.0
+		rect.position.x + rect.size.x - guide_w - 6.0,
+		rect.position.y + rect.size.y - guide_h - 4.0
 	)
+	if _scarecrow_icon != null and is_instance_valid(_scarecrow_icon):
+		_scarecrow_icon.position = Vector2(guide_w - icon_w - 2.0, guide_h - icon_h)
+		_scarecrow_icon.size = Vector2(icon_w, icon_h)
+	## Bouche ≈ 36 % de la hauteur de l'icône (bas de la tête).
+	var mouth_y := guide_h - icon_h + icon_h * 0.36
+	var bubble_root := _scarecrow_guide.get_node_or_null("ScarecrowBubbleRoot") as Control
+	if bubble_root == null:
+		return
+	var bubble := bubble_root.get_node_or_null("ScarecrowBubble") as PanelContainer
+	if bubble == null:
+		return
+	bubble.reset_size()
+	var bsz := bubble.get_combined_minimum_size()
+	bsz.x = maxf(bsz.x, 172.0)
+	bubble.size = bsz
+	var bubble_x := 4.0
+	var bubble_y := clampf(mouth_y - bsz.y * 0.62, 2.0, maxf(2.0, guide_h - bsz.y - 4.0))
+	bubble.position = Vector2(bubble_x, bubble_y)
+	var tip_x := bubble_x + bsz.x - 1.0
+	var tip_y := mouth_y - 9.0
+	var tail := bubble_root.get_node_or_null("ScarecrowTail") as Polygon2D
+	var tail_out := bubble_root.get_node_or_null("ScarecrowTailOutline") as Polygon2D
+	if tail != null:
+		tail.position = Vector2(tip_x, tip_y)
+	if tail_out != null:
+		tail_out.position = Vector2(tip_x, tip_y)
 
 
 func _update_finger_tutorial(_delta: float) -> void:
@@ -3515,6 +3562,16 @@ func _on_field_pan_pressed(dir: Vector2) -> void:
 
 
 func _update_field_zoom_buttons() -> void:
+	## Zoom / flèches : uniquement à partir de la 10e parcelle (édition terrain).
+	var cam_ok := GameState.is_terrain_edit_unlocked()
+	var zoom_col := get_node_or_null("Root/Body/Center/FieldFrame/FieldStack/FieldZoomCol") as Control
+	var pan_pad := get_node_or_null("Root/Body/Center/FieldFrame/FieldStack/FieldPanPad") as Control
+	if zoom_col != null and is_instance_valid(zoom_col):
+		zoom_col.visible = cam_ok
+	if pan_pad != null and is_instance_valid(pan_pad):
+		pan_pad.visible = cam_ok
+	if not cam_ok:
+		return
 	if _field_zoom_out_btn != null and is_instance_valid(_field_zoom_out_btn):
 		_field_zoom_out_btn.disabled = _field_zoom <= _field_fit_zoom + 0.005
 		_field_zoom_out_btn.modulate = Color(1, 1, 1, 0.45) if _field_zoom_out_btn.disabled else Color.WHITE
@@ -3563,6 +3620,8 @@ func _update_edit_terrain_button() -> void:
 		_edit_terrain_btn.icon = _textures["ui_edit_pen"]
 	if _edit_terrain_badge != null and is_instance_valid(_edit_terrain_badge):
 		_edit_terrain_badge.visible = _edit_terrain_btn.visible and _has_unplaced_machines()
+	## Caméra champ liée au même unlock que l'édition terrain.
+	_update_field_zoom_buttons()
 
 
 func _open_terrain_edit() -> void:
