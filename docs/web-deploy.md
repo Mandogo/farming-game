@@ -58,10 +58,10 @@ Si un vieux cache résiste encore :
 
 ## Mobile
 
-- **Portrait** : le shell tourne en paysage logique (`rotate(90deg)`), comme si le téléphone était à l’horizontale.
-- **Paysage** : le jeu remplit la largeur utile ; petites bandes noires latérales = safe-area (notch / Dynamic Island), plus un letterbox 16:9 trop large.
-- Aspect cadre borné entre 16:9 et 20:9 (évite l’étirement ultra-large).
-- Godot : stretch `canvas_items` + `expand` ; marges notch lues via `window.ceiSafeInsets` (sans double comptage des bandes CSS).
+- Le jeu est **toujours en paysage** : long côté = largeur, court = hauteur (même si le téléphone est vertical).
+- En vertical : seul l’affichage est tourné (`rotate(90deg)`) — les mesures restent horizontales (évite l’ultra-stretch).
+- Petites bandes noires latérales (~36 px) pour notch / Dynamic Island.
+- Godot : `canvasResizePolicy = 0` + canvas dimensionné sur le cadre paysage (pas sur `window` portrait).
 - Barre d’URL du navigateur : **impossible** à masquer en navigation web classique.
 - Meilleure UX téléphone : **Ajouter à l’écran d’accueil** (PWA) → ouverture sans barre d’URL.
 - Shell HTML : `misc/web/shell.html` (`100dvh`, safe-area, tip mobile).
