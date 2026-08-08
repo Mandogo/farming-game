@@ -286,7 +286,7 @@ html, body {
 	font: 700 13px/1 system-ui, sans-serif;
 }
 
-/* Shell = viewport (éventuellement tourné). #cei-game = cadre 16:9 letterboxé. */
+/* Shell = viewport (éventuellement tourné). #cei-game = zone jeu (safe-area). */
 #cei-shell {
 	position: fixed;
 	inset: 0;
@@ -374,7 +374,10 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
 const engine = new Engine(GODOT_CONFIG);
 
-/** Insets notch / Dynamic Island (px CSS). 0 sur écrans sans découpe. */
+/** Pads déjà appliqués en bandes noires autour de #cei-game (px CSS logiques). */
+window.ceiLayoutPads = { l: 0, t: 0, r: 0, b: 0 };
+
+/** Insets notch / Dynamic Island restants DANS le cadre jeu (px CSS). */
 window.ceiSafeInsets = function () {
 	const probe = document.getElementById('cei-safe-probe');
 	const s = probe ? getComputedStyle(probe) : null;
@@ -394,7 +397,16 @@ window.ceiSafeInsets = function () {
 		r = t;
 		t = tmp;
 	}
-	return { l: l, t: t, r: r, b: b, w: gameW, h: gameH };
+	const pads = window.ceiLayoutPads || { l: 0, t: 0, r: 0, b: 0 };
+	/* Bandes noires CSS ont déjà mangé les insets → Godot ne double pas. */
+	return {
+		l: Math.max(0, l - (pads.l || 0)),
+		t: Math.max(0, t - (pads.t || 0)),
+		r: Math.max(0, r - (pads.r || 0)),
+		b: Math.max(0, b - (pads.b || 0)),
+		w: gameW,
+		h: gameH,
+	};
 };
 
 (function () {
@@ -527,28 +539,90 @@ window.ceiSafeInsets = function () {
 		return s.h > s.w;
 	}
 
-	/** Cadre jeu 16:9 « classique » (comme en vrai paysage), letterboxé. */
-	const GAME_ASPECT = 16 / 9;
+	/** Remplit le viewport paysage ; bandes noires = safe-area (notch / island), pas un 16:9 figé. */
+	const MIN_ASPECT = 16 / 9;
+	const MAX_ASPECT = 20 / 9;
 
-	function fitContain(availW, availH, aspect) {
-		let w;
-		let h;
-		if (availW / availH > aspect) {
-			h = availH;
-			w = Math.round(h * aspect);
-		} else {
-			w = availW;
-			h = Math.round(w / aspect);
+	function isMobileViewport() {
+		const ua = navigator.userAgent || '';
+		if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+		try {
+			return (navigator.maxTouchPoints > 0)
+				&& window.matchMedia('(pointer: coarse)').matches
+				&& Math.min(screen.width || 0, screen.height || 0) <= 920;
+		} catch (e) {
+			return false;
 		}
+	}
+
+	function readPhysicalSafeInsets() {
+		const probe = document.getElementById('cei-safe-probe');
+		const s = probe ? getComputedStyle(probe) : null;
 		return {
-			w: Math.max(1, w),
-			h: Math.max(1, h),
-			x: Math.round((availW - w) * 0.5),
-			y: Math.round((availH - h) * 0.5),
+			l: s ? (parseFloat(s.paddingLeft) || 0) : 0,
+			t: s ? (parseFloat(s.paddingTop) || 0) : 0,
+			r: s ? (parseFloat(s.paddingRight) || 0) : 0,
+			b: s ? (parseFloat(s.paddingBottom) || 0) : 0,
 		};
 	}
 
-	/** En portrait : shell tourné ; jeu letterboxé 16:9 (plus d'étirement ultra-large). */
+	function remapInsetsForPortrait(ins) {
+		/* translate(pw) rotate(90deg) : top physique → gauche logique */
+		return { l: ins.b, t: ins.l, r: ins.t, b: ins.r };
+	}
+
+	/**
+	 * Cadre jeu : presque plein écran paysage, avec bandes latérales pour la découpe.
+	 * Évite l'ancien letterbox 16:9 (trop de vide) et l'étirement ultra-large (>20:9).
+	 */
+	function fitSafeBleed(availW, availH, insets) {
+		const mobile = isMobileViewport();
+		/* ~36 px min même si env(safe-area)=0 (Safari onglet) — protège Dynamic Island. */
+		const minSide = mobile ? 36 : 0;
+		let padL = Math.max(insets.l || 0, minSide);
+		let padR = Math.max(insets.r || 0, minSide);
+		let padT = Math.max(insets.t || 0, 0);
+		let padB = Math.max(insets.b || 0, 0);
+
+		/* Ne pas manger tout l'écran sur très petits viewports */
+		const maxPadX = Math.max(0, Math.floor((availW - 320) * 0.5));
+		const maxPadY = Math.max(0, Math.floor((availH - 180) * 0.5));
+		padL = Math.min(padL, maxPadX);
+		padR = Math.min(padR, maxPadX);
+		padT = Math.min(padT, maxPadY);
+		padB = Math.min(padB, maxPadY);
+
+		let x = Math.round(padL);
+		let y = Math.round(padT);
+		let w = Math.max(1, Math.round(availW - padL - padR));
+		let h = Math.max(1, Math.round(availH - padT - padB));
+
+		const aspect = w / Math.max(1, h);
+		if (aspect > MAX_ASPECT) {
+			const tw = Math.round(h * MAX_ASPECT);
+			x += Math.round((w - tw) * 0.5);
+			w = tw;
+		} else if (aspect < MIN_ASPECT) {
+			const th = Math.round(w / MIN_ASPECT);
+			y += Math.round((h - th) * 0.5);
+			h = th;
+		}
+
+		return {
+			x: x,
+			y: y,
+			w: Math.max(1, w),
+			h: Math.max(1, h),
+			pads: {
+				l: x,
+				t: y,
+				r: Math.max(0, availW - x - w),
+				b: Math.max(0, availH - y - h),
+			},
+		};
+	}
+
+	/** En portrait : shell tourné en paysage logique ; jeu en safe-bleed (pas d'étirement). */
 	function applyForcedLandscapeLayout() {
 		const shell = document.getElementById('cei-shell');
 		const game = document.getElementById('cei-game');
@@ -576,6 +650,7 @@ window.ceiSafeInsets = function () {
 
 		let availW;
 		let availH;
+		let insets = readPhysicalSafeInsets();
 		if (portrait) {
 			/* Viewport logique paysage après rotation = (h × w) physiques */
 			availW = s.h;
@@ -584,6 +659,7 @@ window.ceiSafeInsets = function () {
 			shell.style.height = availH + 'px';
 			shell.style.transformOrigin = 'top left';
 			shell.style.transform = 'translate(' + s.w + 'px, 0px) rotate(90deg)';
+			insets = remapInsetsForPortrait(insets);
 		} else {
 			availW = s.w;
 			availH = s.h;
@@ -593,7 +669,8 @@ window.ceiSafeInsets = function () {
 			shell.style.transform = 'none';
 		}
 
-		const box = fitContain(availW, availH, GAME_ASPECT);
+		const box = fitSafeBleed(availW, availH, insets);
+		window.ceiLayoutPads = box.pads;
 		if (game) {
 			game.style.left = box.x + 'px';
 			game.style.top = box.y + 'px';
