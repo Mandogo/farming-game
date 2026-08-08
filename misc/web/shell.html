@@ -286,7 +286,7 @@ html, body {
 	font: 700 13px/1 system-ui, sans-serif;
 }
 
-/* Shell = viewport (éventuellement tourné). #cei-game = zone jeu (safe-area). */
+/* Shell = toujours paysage logique (tourné si téléphone vertical). #cei-game = zone jeu. */
 #cei-shell {
 	position: fixed;
 	inset: 0;
@@ -372,41 +372,25 @@ body.cei-portrait {
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
 const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+/* Adaptive(=2) suit window.inner* (portrait) alors que le CSS est tourné → stretch. */
+if (GODOT_CONFIG && typeof GODOT_CONFIG === 'object') {
+	GODOT_CONFIG.canvasResizePolicy = 0;
+}
 const engine = new Engine(GODOT_CONFIG);
 
 /** Pads déjà appliqués en bandes noires autour de #cei-game (px CSS logiques). */
 window.ceiLayoutPads = { l: 0, t: 0, r: 0, b: 0 };
 
-/** Insets notch / Dynamic Island restants DANS le cadre jeu (px CSS). */
+/** Taille logique paysage courante (toujours w ≥ h). */
+window.ceiLandscapeSize = { w: 1, h: 1 };
+
+/** Insets restants DANS le cadre jeu — toujours en coords paysage (pas de remap portrait). */
 window.ceiSafeInsets = function () {
-	const probe = document.getElementById('cei-safe-probe');
-	const s = probe ? getComputedStyle(probe) : null;
-	let l = s ? (parseFloat(s.paddingLeft) || 0) : 0;
-	let t = s ? (parseFloat(s.paddingTop) || 0) : 0;
-	let r = s ? (parseFloat(s.paddingRight) || 0) : 0;
-	let b = s ? (parseFloat(s.paddingBottom) || 0) : 0;
 	const game = document.getElementById('cei-game') || document.getElementById('cei-shell');
-	const portrait = document.body.classList.contains('cei-portrait');
-	const gameW = game ? (game.clientWidth || 1) : 1;
-	const gameH = game ? (game.clientHeight || 1) : 1;
-	if (portrait) {
-		/* translate(pw) rotate(90deg) : top physique → gauche jeu */
-		const tmp = l;
-		l = b;
-		b = r;
-		r = t;
-		t = tmp;
-	}
-	const pads = window.ceiLayoutPads || { l: 0, t: 0, r: 0, b: 0 };
-	/* Bandes noires CSS ont déjà mangé les insets → Godot ne double pas. */
-	return {
-		l: Math.max(0, l - (pads.l || 0)),
-		t: Math.max(0, t - (pads.t || 0)),
-		r: Math.max(0, r - (pads.r || 0)),
-		b: Math.max(0, b - (pads.b || 0)),
-		w: gameW,
-		h: gameH,
-	};
+	const gameW = game ? (game.clientWidth || window.ceiLandscapeSize.w || 1) : 1;
+	const gameH = game ? (game.clientHeight || window.ceiLandscapeSize.h || 1) : 1;
+	/* Bandes noires déjà appliquées en CSS → Godot n'ajoute rien. */
+	return { l: 0, t: 0, r: 0, b: 0, w: gameW, h: gameH };
 };
 
 (function () {
@@ -544,26 +528,13 @@ window.ceiSafeInsets = function () {
 		}
 	}
 
-	function viewportSize() {
+	function physicalViewportSize() {
 		const vv = window.visualViewport;
 		return {
 			w: Math.max(1, Math.round((vv && vv.width) || window.innerWidth || document.documentElement.clientWidth || 1)),
 			h: Math.max(1, Math.round((vv && vv.height) || window.innerHeight || document.documentElement.clientHeight || 1)),
 		};
 	}
-
-	function isPortrait() {
-		const s = viewportSize();
-		if (window.matchMedia) {
-			if (window.matchMedia('(orientation: portrait)').matches) return true;
-			if (window.matchMedia('(orientation: landscape)').matches) return false;
-		}
-		return s.h > s.w;
-	}
-
-	/** Remplit le viewport paysage ; bandes noires = safe-area (notch / island), pas un 16:9 figé. */
-	const MIN_ASPECT = 16 / 9;
-	const MAX_ASPECT = 20 / 9;
 
 	function isMobileViewport() {
 		const ua = navigator.userAgent || '';
@@ -577,86 +548,68 @@ window.ceiSafeInsets = function () {
 		}
 	}
 
-	function readPhysicalSafeInsets() {
-		const probe = document.getElementById('cei-safe-probe');
-		const s = probe ? getComputedStyle(probe) : null;
+	/**
+	 * Toujours du paysage : long côté = largeur, court = hauteur.
+	 * On ignore l'orientation téléphone pour les mesures du jeu.
+	 */
+	function landscapeMetrics() {
+		const phys = physicalViewportSize();
+		const needsRotate = phys.h > phys.w;
+		const logicW = Math.max(phys.w, phys.h);
+		const logicH = Math.min(phys.w, phys.h);
 		return {
-			l: s ? (parseFloat(s.paddingLeft) || 0) : 0,
-			t: s ? (parseFloat(s.paddingTop) || 0) : 0,
-			r: s ? (parseFloat(s.paddingRight) || 0) : 0,
-			b: s ? (parseFloat(s.paddingBottom) || 0) : 0,
+			physW: phys.w,
+			physH: phys.h,
+			logicW: logicW,
+			logicH: logicH,
+			needsRotate: needsRotate,
 		};
 	}
 
-	function remapInsetsForPortrait(ins) {
-		/* translate(pw) rotate(90deg) : top physique → gauche logique */
-		return { l: ins.b, t: ins.l, r: ins.t, b: ins.r };
-	}
-
-	/**
-	 * Cadre jeu : presque plein écran paysage, avec bandes latérales pour la découpe.
-	 * Évite l'ancien letterbox 16:9 (trop de vide) et l'étirement ultra-large (>20:9).
-	 */
-	function fitSafeBleed(availW, availH, insets) {
+	/** Bandes latérales fixes (notch / island) — mêmes règles en portrait tourné ou vrai paysage. */
+	function fitLandscapeGame(logicW, logicH) {
 		const mobile = isMobileViewport();
-		/* ~36 px min même si env(safe-area)=0 (Safari onglet) — protège Dynamic Island. */
 		const minSide = mobile ? 36 : 0;
-		let padL = Math.max(insets.l || 0, minSide);
-		let padR = Math.max(insets.r || 0, minSide);
-		let padT = Math.max(insets.t || 0, 0);
-		let padB = Math.max(insets.b || 0, 0);
-
-		/* Ne pas manger tout l'écran sur très petits viewports */
-		const maxPadX = Math.max(0, Math.floor((availW - 320) * 0.5));
-		const maxPadY = Math.max(0, Math.floor((availH - 180) * 0.5));
-		padL = Math.min(padL, maxPadX);
-		padR = Math.min(padR, maxPadX);
-		padT = Math.min(padT, maxPadY);
-		padB = Math.min(padB, maxPadY);
-
-		let x = Math.round(padL);
-		let y = Math.round(padT);
-		let w = Math.max(1, Math.round(availW - padL - padR));
-		let h = Math.max(1, Math.round(availH - padT - padB));
-
-		const aspect = w / Math.max(1, h);
-		if (aspect > MAX_ASPECT) {
-			const tw = Math.round(h * MAX_ASPECT);
-			x += Math.round((w - tw) * 0.5);
-			w = tw;
-		} else if (aspect < MIN_ASPECT) {
-			const th = Math.round(w / MIN_ASPECT);
-			y += Math.round((h - th) * 0.5);
-			h = th;
-		}
-
+		const maxPadX = Math.max(0, Math.floor((logicW - 320) * 0.5));
+		const pad = Math.min(minSide, maxPadX);
+		const x = pad;
+		const y = 0;
+		const w = Math.max(1, logicW - pad * 2);
+		const h = Math.max(1, logicH);
 		return {
 			x: x,
 			y: y,
-			w: Math.max(1, w),
-			h: Math.max(1, h),
-			pads: {
-				l: x,
-				t: y,
-				r: Math.max(0, availW - x - w),
-				b: Math.max(0, availH - y - h),
-			},
+			w: w,
+			h: h,
+			pads: { l: x, t: 0, r: pad, b: 0 },
 		};
 	}
 
-	/** En portrait : shell tourné en paysage logique ; jeu en safe-bleed (pas d'étirement). */
+	/** Canvas buffer = cadre paysage (évite le stretch window-portrait → CSS-paysage). */
+	function sizeGameCanvas(canvas, w, h) {
+		if (!canvas) return;
+		canvas.style.width = w + 'px';
+		canvas.style.height = h + 'px';
+		if (canvas.width !== w) canvas.width = w;
+		if (canvas.height !== h) canvas.height = h;
+	}
+
+	/** Jeu toujours horizontal. Si le téléphone est vertical : on tourne l'affichage, pas les mesures. */
 	function applyForcedLandscapeLayout() {
 		const shell = document.getElementById('cei-shell');
 		const game = document.getElementById('cei-game');
 		const canvas = document.getElementById('canvas');
-		const s = viewportSize();
-		const portrait = isPortrait();
-		document.documentElement.classList.toggle('cei-portrait', portrait);
-		document.body.classList.toggle('cei-portrait', portrait);
-		document.documentElement.style.width = s.w + 'px';
-		document.documentElement.style.height = s.h + 'px';
-		document.body.style.width = s.w + 'px';
-		document.body.style.height = s.h + 'px';
+		const m = landscapeMetrics();
+		window.ceiLandscapeSize = { w: m.logicW, h: m.logicH };
+
+		document.documentElement.classList.toggle('cei-portrait', m.needsRotate);
+		document.body.classList.toggle('cei-portrait', m.needsRotate);
+		/* Le document reste sur la taille physique ; seul le shell est en paysage logique. */
+		document.documentElement.style.width = m.physW + 'px';
+		document.documentElement.style.height = m.physH + 'px';
+		document.body.style.width = m.physW + 'px';
+		document.body.style.height = m.physH + 'px';
+
 		if (!shell) {
 			lockLandscape();
 			return;
@@ -669,29 +622,16 @@ window.ceiSafeInsets = function () {
 		shell.style.margin = '0';
 		shell.style.zIndex = '1';
 		shell.style.background = '#1a1f1c';
-
-		let availW;
-		let availH;
-		let insets = readPhysicalSafeInsets();
-		if (portrait) {
-			/* Viewport logique paysage après rotation = (h × w) physiques */
-			availW = s.h;
-			availH = s.w;
-			shell.style.width = availW + 'px';
-			shell.style.height = availH + 'px';
-			shell.style.transformOrigin = 'top left';
-			shell.style.transform = 'translate(' + s.w + 'px, 0px) rotate(90deg)';
-			insets = remapInsetsForPortrait(insets);
+		shell.style.width = m.logicW + 'px';
+		shell.style.height = m.logicH + 'px';
+		shell.style.transformOrigin = 'top left';
+		if (m.needsRotate) {
+			shell.style.transform = 'translate(' + m.physW + 'px, 0px) rotate(90deg)';
 		} else {
-			availW = s.w;
-			availH = s.h;
-			shell.style.width = availW + 'px';
-			shell.style.height = availH + 'px';
-			shell.style.transformOrigin = 'top left';
 			shell.style.transform = 'none';
 		}
 
-		const box = fitSafeBleed(availW, availH, insets);
+		const box = fitLandscapeGame(m.logicW, m.logicH);
 		window.ceiLayoutPads = box.pads;
 		if (game) {
 			game.style.left = box.x + 'px';
@@ -699,10 +639,7 @@ window.ceiSafeInsets = function () {
 			game.style.width = box.w + 'px';
 			game.style.height = box.h + 'px';
 		}
-		if (canvas) {
-			canvas.style.width = '100%';
-			canvas.style.height = '100%';
-		}
+		sizeGameCanvas(canvas, box.w, box.h);
 		lockLandscape();
 	}
 
