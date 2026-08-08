@@ -2376,37 +2376,37 @@ func _scarecrow_text_for(kind: StringName) -> String:
 	match kind:
 		&"plant":
 			var cname := GameState.crop_display_name(GameState.tutorial_next_crop_id())
-			return "Parcelle vide → %s" % cname
+			return "Plante une %s sur une parcelle vide !" % cname
 		&"switch_seed":
 			var cname2 := GameState.crop_display_name(GameState.tutorial_next_crop_id())
-			return "Graine %s en bas" % cname2
+			return "Choisis la graine %s en bas." % cname2
 		&"accelerate":
-			return "Clique la plante !"
+			return "Clique la plante pour accélérer !"
 		&"harvest":
-			return "Récolte !"
+			return "C’est prêt — récolte !"
 		&"deliver":
-			return "Livre la commande"
+			return "Livre : tomate, carotte, poivron."
 		&"sell":
-			return "Stock → vendre"
+			return "Stock sous le poivron → vends."
 		&"sell_confirm":
-			return "Appuie Vendre"
+			return "Appuie sur Vendre."
 		&"missions_tab":
-			return "Ouvre Missions"
+			return "Ouvre l’onglet Missions."
 		&"claim_mission":
-			return "Récupère !"
+			return "Récupère ta récompense !"
 		&"terrain_edit":
-			return "Clique Éditer"
+			return "Nouvelle parcelle — clique Éditer."
 		&"skill_tree":
-			return "Ouvre l’arbre"
+			return "Niveau up ! Ouvre l’arbre."
 		&"skill_pick_zone":
-			return "« Clics en zone »"
+			return "Clique « Clics en zone »."
 		&"skill_buy_zone":
-			return "Débloque !"
+			return "Débloque « Clics en zone » !"
 		&"relics_tab":
-			return "Ouvre Reliques"
+			return "Ouvre Reliques (3ᵉ menu)."
 		&"relics_explain":
 			var pct := GameState.prestige_points_bonus_pct()
-			return "+%d%% or/XP — améliore !" % pct
+			return "Pts prestige : +%d%% or/XP." % pct
 		_:
 			return ""
 
@@ -2860,16 +2860,17 @@ func _ensure_scarecrow_guide() -> void:
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	host.z_index = 210
 	host.top_level = true
-	host.custom_minimum_size = Vector2(168, 88)
+	host.clip_contents = false
+	host.custom_minimum_size = Vector2(260, 128)
 	add_child(host)
 	_scarecrow_guide = host
 
-	## Compact, coin bas-droit — ne masque pas les clics.
+	## Taille d’origine ; demi-corps hors écran en bas-droite (diagonal).
 	var icon := TextureRect.new()
 	icon.name = "ScarecrowIcon"
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	icon.custom_minimum_size = Vector2(44, 68)
-	icon.size = Vector2(44, 68)
+	icon.custom_minimum_size = Vector2(84, 128)
+	icon.size = Vector2(84, 128)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
@@ -2890,8 +2891,8 @@ func _ensure_scarecrow_guide() -> void:
 	tail_outline.color = Color(0.42, 0.30, 0.16, 0.95)
 	tail_outline.polygon = PackedVector2Array([
 		Vector2(0, 1),
-		Vector2(10, 6),
-		Vector2(0, 11),
+		Vector2(14, 8),
+		Vector2(0, 15),
 	])
 	bubble_root.add_child(tail_outline)
 
@@ -2900,8 +2901,8 @@ func _ensure_scarecrow_guide() -> void:
 	tail.color = Color(0.97, 0.93, 0.78, 0.97)
 	tail.polygon = PackedVector2Array([
 		Vector2(1, 2),
-		Vector2(8, 6),
-		Vector2(1, 10),
+		Vector2(11, 8),
+		Vector2(1, 14),
 	])
 	bubble_root.add_child(tail)
 
@@ -2912,25 +2913,29 @@ func _ensure_scarecrow_guide() -> void:
 	bst.bg_color = Color(0.97, 0.93, 0.78, 0.97)
 	bst.border_color = Color(0.42, 0.30, 0.16, 0.95)
 	bst.set_border_width_all(2)
-	bst.set_corner_radius_all(8)
-	bst.content_margin_left = 6
-	bst.content_margin_right = 6
-	bst.content_margin_top = 3
-	bst.content_margin_bottom = 3
-	bst.shadow_color = Color(0, 0, 0, 0.16)
-	bst.shadow_size = 3
+	bst.set_corner_radius_all(12)
+	## Large et plate : peu de hauteur, texte sur 1–2 lignes.
+	bst.content_margin_left = 10
+	bst.content_margin_right = 10
+	bst.content_margin_top = 4
+	bst.content_margin_bottom = 4
+	bst.shadow_color = Color(0, 0, 0, 0.20)
+	bst.shadow_size = 5
 	bubble.add_theme_stylebox_override("panel", bst)
 	bubble_root.add_child(bubble)
 
 	var blabel := Label.new()
 	blabel.name = "ScarecrowText"
 	blabel.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	blabel.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	blabel.custom_minimum_size = Vector2(88, 0)
-	blabel.add_theme_font_size_override("font_size", 10)
+	blabel.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	blabel.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	blabel.max_lines_visible = 2
+	blabel.custom_minimum_size = Vector2(152, 0)
+	blabel.add_theme_font_size_override("font_size", 13)
 	blabel.add_theme_color_override("font_color", Color(0.22, 0.16, 0.10, 1.0))
 	blabel.add_theme_color_override("font_outline_color", Color(1, 1, 1, 0.55))
-	blabel.add_theme_constant_override("outline_size", 1)
+	blabel.add_theme_constant_override("outline_size", 2)
+	blabel.add_theme_constant_override("line_spacing", -2)
 	blabel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	bubble.add_child(blabel)
 	_scarecrow_label = blabel
@@ -2962,12 +2967,12 @@ func _show_scarecrow_guide(text: String) -> void:
 		_scarecrow_guide.z_index = 210
 	_update_scarecrow_guide_position()
 	if created or was_hidden or prev_text != text:
-		## Scale bas : laisse voir le doigt / les clics.
+		## Taille d’origine (scale 1).
 		_scarecrow_guide.modulate.a = 0.0
-		_scarecrow_guide.scale = Vector2(0.72, 0.72)
+		_scarecrow_guide.scale = Vector2(0.92, 0.92)
 		var tw := create_tween()
-		tw.tween_property(_scarecrow_guide, "modulate:a", 1.0, 0.14)
-		tw.parallel().tween_property(_scarecrow_guide, "scale", Vector2(0.78, 0.78), 0.16).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		tw.tween_property(_scarecrow_guide, "modulate:a", 1.0, 0.18)
+		tw.parallel().tween_property(_scarecrow_guide, "scale", Vector2.ONE, 0.22).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 
 func _hide_scarecrow_guide() -> void:
@@ -2987,22 +2992,24 @@ func _update_scarecrow_guide_position() -> void:
 		rect = frame.get_global_rect()
 	else:
 		rect = get_viewport_rect()
-	## Compact, bas-droite (texte plus bas près de la bouche).
-	var guide_w := 168.0
-	var guide_h := 88.0
-	var icon_w := 44.0
-	var icon_h := 68.0
+	## Taille d’origine ; centre de l’icône = coin bas-droit → demi-corps hors écran en diagonal.
+	var icon_w := 84.0
+	var icon_h := 128.0
+	var bubble_w := 156.0
+	var guide_w := bubble_w + 8.0 + icon_w
+	var guide_h := icon_h
 	_scarecrow_guide.size = Vector2(guide_w, guide_h)
-	_scarecrow_guide.pivot_offset = Vector2(guide_w, guide_h)
+	_scarecrow_guide.pivot_offset = Vector2(guide_w - icon_w * 0.5, icon_h * 0.5)
+	## Coin bas-droit du champ = centre de l’épouvantail.
 	_scarecrow_guide.global_position = Vector2(
-		rect.position.x + rect.size.x - guide_w + 10.0,
-		rect.position.y + rect.size.y - guide_h + 10.0
+		rect.position.x + rect.size.x - (guide_w - icon_w * 0.5),
+		rect.position.y + rect.size.y - icon_h * 0.5
 	)
 	if _scarecrow_icon != null and is_instance_valid(_scarecrow_icon):
-		_scarecrow_icon.position = Vector2(guide_w - icon_w, guide_h - icon_h)
+		_scarecrow_icon.position = Vector2(guide_w - icon_w, 0.0)
 		_scarecrow_icon.size = Vector2(icon_w, icon_h)
-	## Bouche ≈ 38 % de la hauteur de l'icône.
-	var mouth_y := guide_h - icon_h + icon_h * 0.38
+	## Bouche ≈ 36 % de la hauteur de l'icône (bas de la tête).
+	var mouth_y := icon_h * 0.36
 	var bubble_root := _scarecrow_guide.get_node_or_null("ScarecrowBubbleRoot") as Control
 	if bubble_root == null:
 		return
@@ -3011,15 +3018,15 @@ func _update_scarecrow_guide_position() -> void:
 		return
 	bubble.reset_size()
 	var bsz := bubble.get_combined_minimum_size()
-	bsz.x = mini(bsz.x, 96.0)
-	bsz.x = maxf(bsz.x, 88.0)
+	bsz.x = clampf(bsz.x, 148.0, 168.0)
+	## Cap hauteur : bulle plate (≈ 2 lignes).
+	bsz.y = mini(bsz.y, 44.0)
 	bubble.size = bsz
-	var bubble_x := 1.0
-	## Bulle plus basse : bas de bulle près de la bouche (texte moins haut).
-	var bubble_y := clampf(mouth_y - bsz.y * 0.28, 0.0, maxf(0.0, guide_h - bsz.y - 1.0))
+	var bubble_x := 2.0
+	var bubble_y := clampf(mouth_y - bsz.y * 0.55, 2.0, maxf(2.0, guide_h * 0.5 - bsz.y))
 	bubble.position = Vector2(bubble_x, bubble_y)
 	var tip_x := bubble_x + bsz.x - 1.0
-	var tip_y := mouth_y - 5.0
+	var tip_y := mouth_y - 8.0
 	var tail := bubble_root.get_node_or_null("ScarecrowTail") as Polygon2D
 	var tail_out := bubble_root.get_node_or_null("ScarecrowTailOutline") as Polygon2D
 	if tail != null:
