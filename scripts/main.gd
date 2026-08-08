@@ -2125,7 +2125,7 @@ func _open_skill_tree_focused(skill_id: String) -> void:
 	## Ouvre l'arbre ; si skill_id est renseigné, va sur son axe et sélectionne le nœud.
 	if skill_tree_overlay == null:
 		return
-	var skill_tuto := _is_skill_tree_tutorial_pending() \
+	var skill_tuto: bool = _is_skill_tree_tutorial_pending() \
 		or _tutorial_mode == &"skill_tree" \
 		or _skill_tree_tuto_active
 	if skill_tuto and skill_id.is_empty() and GameState.get_skill_level("root_hub") <= 0:
@@ -2833,7 +2833,7 @@ func _find_tut_claim_btn() -> Control:
 	return null
 
 
-func _find_tut_skill_buy_btn() -> Control:
+func _find_tut_skill_buy_btn() -> Button:
 	if _skill_detail == null or not is_instance_valid(_skill_detail):
 		return null
 	var buy := _skill_detail.get_node_or_null("TipCol/TipBuy") as Button
@@ -2921,14 +2921,14 @@ func _show_scarecrow_guide(text: String) -> void:
 	if text.is_empty():
 		_hide_scarecrow_guide()
 		return
-	var created := _scarecrow_guide == null or not is_instance_valid(_scarecrow_guide)
+	var created: bool = _scarecrow_guide == null or not is_instance_valid(_scarecrow_guide)
 	var prev_text := ""
 	if not created and _scarecrow_label != null and is_instance_valid(_scarecrow_label):
 		prev_text = _scarecrow_label.text
 	_ensure_scarecrow_guide()
 	if _scarecrow_guide == null or not is_instance_valid(_scarecrow_guide):
 		return
-	var was_hidden := not _scarecrow_guide.visible
+	var was_hidden: bool = not _scarecrow_guide.visible
 	_scarecrow_guide.visible = true
 	if _scarecrow_label != null and is_instance_valid(_scarecrow_label):
 		_scarecrow_label.text = text
@@ -2996,8 +2996,8 @@ func _update_finger_tutorial(_delta: float) -> void:
 			_finish_skill_tree_tutorial()
 			return
 		if skill_tree_overlay != null and skill_tree_overlay.visible:
-			var buy := _find_tut_skill_buy_btn()
-			var want_buy := (
+			var buy := _find_tut_skill_buy_btn() as Button
+			var want_buy: bool = (
 				_skill_selected_id == "root_hub"
 				and buy != null
 				and is_instance_valid(buy)
@@ -6195,7 +6195,7 @@ func _on_skill_detail_buy_pressed() -> void:
 	var sid := _skill_selected_id
 	if GameState.buy_skill(sid):
 		Sfx.play("skill_buy", 0.02, 1.0, 80)
-		var finish_skill_tuto := sid == "root_hub" and (
+		var finish_skill_tuto: bool = sid == "root_hub" and (
 			_skill_tree_tuto_active
 			or _tutorial_mode == &"skill_buy_zone"
 			or _tutorial_mode == &"skill_pick_zone"
