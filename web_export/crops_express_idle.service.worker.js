@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1786193839|f15026a7e5a9';
+const CACHE_VERSION = '1786194244|4bd8d4d79880';
 /** @type {string} */
 const CACHE_PREFIX = 'Crops Express Id-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -152,12 +152,30 @@ self.addEventListener(
 		if (isCacheable || isHeavyAsset) {
 			event.respondWith((async () => {
 				const cache = await caches.open(CACHE_NAME);
+				// wasm/pck : network-first avec fallback cache (évite PWA coincée sur un vieux build).
+				if (isHeavyAsset) {
+					try {
+						const response = await fetchAndCache(event, cache, true);
+						return response;
+					} catch (e) {
+						let cached = await cache.match(event.request);
+						if (cached == null && pathName) {
+							cached = await cache.match(pathName);
+						}
+						if (cached != null) {
+							if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
+								cached = ensureCrossOriginIsolationHeaders(cached);
+							}
+							return cached;
+						}
+						throw e;
+					}
+				}
 				let cached = await cache.match(event.request);
 				if (cached != null) {
 					if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
 						cached = ensureCrossOriginIsolationHeaders(cached);
 					}
-					// Mise à jour en arrière-plan pour le prochain chargement.
 					event.waitUntil(fetchAndCache(event, cache, true).catch(() => undefined));
 					return cached;
 				}

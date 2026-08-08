@@ -40,6 +40,8 @@ html, body {
 	width: 100%;
 	height: 100%;
 	outline: none;
+	/* Pas de pixelated : rendu farm 2D soft (le buffer DPR garde la netteté). */
+	image-rendering: auto;
 }
 
 #canvas:focus {
@@ -292,15 +294,23 @@ html, body {
 	inset: 0;
 	width: 100%;
 	height: 100%;
+	height: 100dvh;
 	overflow: hidden;
 	background: #1a1f1c;
-	transform-origin: top left;
+	/* Pas de rotate sur le shell : il reste plein écran (évite bande noire hors stage). */
+	transform: none;
 }
 
 #cei-game {
 	position: absolute;
 	overflow: hidden;
 	background: #1a1f1c;
+	transform-origin: top left;
+	/* Couche GPU propre : limite le flou du rotate(90deg) en portrait. */
+	-webkit-backface-visibility: hidden;
+	backface-visibility: hidden;
+	-webkit-transform: translateZ(0);
+	transform: translateZ(0);
 }
 
 #cei-game #canvas,
@@ -412,7 +422,7 @@ window.ceiSafeInsets = function () {
 	let loadDone = false;
 	const loadStartedAt = performance.now();
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
-	const CEI_DEPLOY_ID = '1786193839|f15026a7e5a9';
+	const CEI_DEPLOY_ID = '1786194244|4bd8d4d79880';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 20000;
 	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
@@ -595,26 +605,22 @@ window.ceiSafeInsets = function () {
 	}
 
 	/**
-	 * Même équilibre qu'en vrai paysage : bandes seulement à gauche/droite du jeu,
-	 * hauteur 100 %. En portrait tourné, les insets haut/bas physiques deviennent
-	 * les côtés logiques (symétrisés pour éviter une grosse bande d'un seul côté).
+	 * Bandes seulement sur les bords « longs » du téléphone (gauche/droite en paysage).
+	 * En portrait + rotate(90deg) CW (y vers le bas) :
+	 *   gauche logique → haut physique (notch) ; droite logique → bas physique (home).
+	 * Ne pas symétriser au max(notch, home) : ça doublait la bande du bas.
 	 */
 	function fitLandscapeGame(logicW, logicH, needsRotate) {
 		const mobile = isMobileViewport();
-		const minSide = mobile ? 36 : 0;
+		const minSide = mobile ? 28 : 0;
 		const maxPadX = Math.max(0, Math.floor((logicW - 320) * 0.5));
 		const safe = readSafeInsets();
 
 		let padL;
 		let padR;
 		if (needsRotate) {
-			/* rotate(90deg) CW : bas physique → gauche jeu, haut physique → droite jeu */
-			const rawL = Math.max(safe.b, minSide);
-			const rawR = Math.max(safe.t, minSide);
-			/* Symétrique comme en paysage (évite bande bas >> bande haut). */
-			const side = Math.min(maxPadX, Math.max(rawL, rawR));
-			padL = side;
-			padR = side;
+			padL = Math.min(maxPadX, Math.max(safe.t, minSide)); /* → haut téléphone */
+			padR = Math.min(maxPadX, Math.max(safe.b, minSide)); /* → bas téléphone */
 		} else {
 			padL = Math.min(maxPadX, Math.max(safe.l, minSide));
 			padR = Math.min(maxPadX, Math.max(safe.r, minSide));
@@ -633,27 +639,28 @@ window.ceiSafeInsets = function () {
 		};
 	}
 
+	function canvasDpr() {
+		return Math.max(1, Math.min(Number(window.devicePixelRatio) || 1, 3));
+	}
+
 	/**
-	 * Canvas buffer = cadre paysage × DPR (évite le stretch window-portrait → CSS-paysage).
-	 * Sans DPR, Godot rend en pixels CSS puis le navigateur upscale → flou / hyperpixelisé
-	 * sur téléphone (retina 2×–3×). Même logique que le resize Adaptive de Godot.
+	 * Buffer canvas = CSS × DPR (comme Adaptive Godot).
+	 * Sans ça le navigateur upscale un framebuffer 1× → flou rétina.
 	 */
 	function sizeGameCanvas(canvas, w, h) {
 		if (!canvas) return;
 		const cssW = Math.max(1, Math.round(w));
 		const cssH = Math.max(1, Math.round(h));
-		const dpr = Math.max(1, Math.min(Number(window.devicePixelRatio) || 1, 3));
+		const dpr = canvasDpr();
 		const bufW = Math.max(1, Math.round(cssW * dpr));
 		const bufH = Math.max(1, Math.round(cssH * dpr));
-		const csw = cssW + 'px';
-		const csh = cssH + 'px';
-		if (canvas.style.width !== csw) canvas.style.width = csw;
-		if (canvas.style.height !== csh) canvas.style.height = csh;
+		/* CSS size via parent 100% ; on force aussi en inline (sans !important). */
 		if (canvas.width !== bufW) canvas.width = bufW;
 		if (canvas.height !== bufH) canvas.height = bufH;
+		window.ceiCanvasBuffer = { w: bufW, h: bufH, cssW: cssW, cssH: cssH, dpr: dpr };
 	}
 
-	/** Jeu toujours horizontal. Si le téléphone est vertical : on tourne l'affichage, pas les mesures. */
+	/** Jeu toujours horizontal. Shell plein écran ; c’est #cei-game qui tourne en portrait. */
 	function applyForcedLandscapeLayout() {
 		const shell = document.getElementById('cei-shell');
 		const game = document.getElementById('cei-game');
@@ -663,44 +670,65 @@ window.ceiSafeInsets = function () {
 
 		document.documentElement.classList.toggle('cei-portrait', m.needsRotate);
 		document.body.classList.toggle('cei-portrait', m.needsRotate);
-		/*
-		 * Ne pas réduire html/body à visualViewport (souvent < 100dvh) :
-		 * ça laissait une bande noire sous le shell en portrait.
-		 * On garde le CSS 100dvh et on couvre avec le shell.
-		 */
-		document.documentElement.style.width = '';
-		document.documentElement.style.height = '';
-		document.body.style.width = '';
-		document.body.style.height = '';
+
+		/* Shell / body toujours plein viewport peint — plus de bande hors-stage en bas. */
+		document.documentElement.style.width = '100%';
+		document.documentElement.style.height = '100%';
+		document.body.style.width = '100%';
+		document.body.style.height = '100%';
 
 		if (!shell) {
 			lockLandscape();
 			return;
 		}
 		shell.style.position = 'fixed';
-		shell.style.top = m.offsetY + 'px';
-		shell.style.left = m.offsetX + 'px';
-		shell.style.right = 'auto';
-		shell.style.bottom = 'auto';
+		shell.style.inset = '0';
+		shell.style.top = '0';
+		shell.style.left = '0';
+		shell.style.right = '0';
+		shell.style.bottom = '0';
+		shell.style.width = '100%';
+		shell.style.height = '100%';
 		shell.style.margin = '0';
 		shell.style.zIndex = '1';
 		shell.style.background = '#1a1f1c';
-		shell.style.width = m.logicW + 'px';
-		shell.style.height = m.logicH + 'px';
-		shell.style.transformOrigin = 'top left';
-		if (m.needsRotate) {
-			shell.style.transform = 'translate(' + m.physW + 'px, 0px) rotate(90deg)';
-		} else {
-			shell.style.transform = 'none';
-		}
+		shell.style.transform = 'none';
+		shell.style.overflow = 'hidden';
 
 		const box = fitLandscapeGame(m.logicW, m.logicH, m.needsRotate);
 		window.ceiLayoutPads = box.pads;
+
 		if (game) {
-			game.style.left = box.x + 'px';
-			game.style.top = box.y + 'px';
+			game.style.position = 'absolute';
+			game.style.margin = '0';
+			game.style.padding = '0';
+			game.style.overflow = 'hidden';
+			game.style.background = '#1a1f1c';
+			game.style.transformOrigin = 'top left';
+			game.style.webkitBackfaceVisibility = 'hidden';
+			game.style.backfaceVisibility = 'hidden';
+			game.style.left = '0';
+			game.style.top = '0';
+			game.style.right = 'auto';
+			game.style.bottom = 'auto';
 			game.style.width = box.w + 'px';
 			game.style.height = box.h + 'px';
+
+			if (m.needsRotate) {
+				/*
+				 * Shell full-bleed (noir) ; seul le cadre jeu tourne.
+				 * Transform = même repère que l’ancien shell, avec offset des pads
+				 * (translate stage → rotate → translate écran).
+				 */
+				const ox = Math.round(box.x);
+				const oy = Math.round(box.y);
+				const pw = Math.round(m.physW);
+				game.style.transform = 'translate(' + pw + 'px, 0px) rotate(90deg) translate(' + ox + 'px, ' + oy + 'px)';
+			} else {
+				game.style.left = box.x + 'px';
+				game.style.top = '0';
+				game.style.transform = 'translateZ(0)';
+			}
 		}
 		sizeGameCanvas(canvas, box.w, box.h);
 		lockLandscape();
@@ -709,6 +737,17 @@ window.ceiSafeInsets = function () {
 	function fitViewport() {
 		applyForcedLandscapeLayout();
 		window.dispatchEvent(new Event('resize'));
+	}
+
+	/** Godot peut réécrire canvas.width au boot : on ré-applique le buffer DPR. */
+	function enforceCanvasDpr(times, delayMs) {
+		let n = 0;
+		const tick = function () {
+			fitViewport();
+			n += 1;
+			if (n < times) setTimeout(tick, delayMs);
+		};
+		tick();
 	}
 
 	applyForcedLandscapeLayout();
@@ -730,6 +769,9 @@ window.ceiSafeInsets = function () {
 	});
 	window.addEventListener('click', lockLandscape, { once: true });
 	window.addEventListener('touchstart', lockLandscape, { once: true, passive: true });
+	try {
+		console.info('[CEI] shell', CEI_DEPLOY_ID, 'dpr', canvasDpr());
+	} catch (e) {}
 
 	function isStandalone() {
 		return window.matchMedia('(display-mode: standalone)').matches
@@ -820,6 +862,8 @@ window.ceiSafeInsets = function () {
 			},
 		}).then(() => {
 			setStatusMode('hidden');
+			/* Ré-applique DPR après init Godot (souvent réécrit canvas.width). */
+			enforceCanvasDpr(8, 120);
 		}, displayFailureNotice);
 	}
 
