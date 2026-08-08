@@ -1506,10 +1506,10 @@ func plant_on_plot(index: int) -> bool:
 	if not is_tutorial_done():
 		var need_id := tutorial_next_crop_id()
 		if need_id == &"":
-			toast.emit("Tuto — récolte ou livre la commande.")
+			toast.emit("Tuto — Récolte / livre")
 			return false
 		if crop.id != need_id:
-			toast.emit("Tuto — plante uniquement : %s" % crop_display_name(need_id))
+			toast.emit("Tuto — Seulement %s" % crop_display_name(need_id))
 			return false
 	p["crop"] = crop
 	p["grown"] = 0.0
@@ -2099,7 +2099,7 @@ func _advance_tutorial_on_deliver() -> void:
 		if crops[i].id == TUTORIAL_SELL_CROP:
 			selected_crop_index = i
 			break
-	toast.emit("Tuto — Voici 1 %s : clique Stock sous le poivron pour vendre." % crop_display_name(TUTORIAL_SELL_CROP))
+	toast.emit("Tuto — Stock → vendre")
 	tutorial_nudge.emit(&"sell")
 	save_game()
 
@@ -2113,7 +2113,7 @@ func _advance_tutorial_on_sell() -> void:
 	_refill_orders()
 	missions_changed.emit()
 	board_quests_changed.emit()
-	toast.emit("Tuto — Ouvre l’onglet Missions pour récupérer ta récompense.")
+	toast.emit("Tuto — Ouvre Missions")
 	tutorial_nudge.emit(&"missions_tab")
 	save_game()
 
