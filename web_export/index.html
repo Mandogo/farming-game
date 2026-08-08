@@ -373,7 +373,7 @@ body.cei-portrait {
 
 		<script src="crops_express_idle.js"></script>
 		<script>
-const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":12740812,"crops_express_idle.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
+const GODOT_CONFIG = {"args":[],"canvasResizePolicy":2,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":true,"executable":"crops_express_idle","experimentalVK":false,"fileSizes":{"crops_express_idle.pck":12765184,"crops_express_idle.wasm":37695054},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4,"serviceWorker":"crops_express_idle.service.worker.js"};
 const GODOT_THREADS_ENABLED = false;
 /* Adaptive(=2) suit window.inner* (portrait) alors que le CSS est tourné → stretch. */
 if (GODOT_CONFIG && typeof GODOT_CONFIG === 'object') {
@@ -412,7 +412,7 @@ window.ceiSafeInsets = function () {
 	let loadDone = false;
 	const loadStartedAt = performance.now();
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
-	const CEI_DEPLOY_ID = '1786191211|e2848f0b5095';
+	const CEI_DEPLOY_ID = '1786191421|7cdd29be1fc1';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 20000;
 	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
