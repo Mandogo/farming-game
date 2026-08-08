@@ -422,12 +422,12 @@ window.ceiSafeInsets = function () {
 	let loadDone = false;
 	const loadStartedAt = performance.now();
 	/* Stampé par tools/patch_web_sw.py à chaque export / deploy. */
-	const CEI_DEPLOY_ID = '1786205192|d7b3c41d98bc';
+	const CEI_DEPLOY_ID = '1786205281|98a7540ae1b2';
 	/* Incrémenter pour forcer un hard-refresh PWA après un fix shell layout. */
 	const CEI_LAYOUT_VER = 'portrait-pad-v4';
 	const EXPECT_MS = 4500;
 	const LOAD_WATCHDOG_MS = 20000;
-	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
+	const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + (typeof CEI_LAYOUT_VER !== 'undefined' ? CEI_LAYOUT_VER + '|' : '') + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});
 
 	/** Purge SW + Cache Storage puis recharge (une seule fois par onglet). */
 	async function ceiHardRefresh(reason) {

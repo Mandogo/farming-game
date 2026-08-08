@@ -264,11 +264,16 @@ def _stamp_html(deploy_id: str) -> None:
 			1,
 		)
 
-	# BUILD_ID = deploy stamp + fileSizes (détecte shell-only ET gros binaires)
+	# BUILD_ID = deploy stamp + layout ver (si présent) + fileSizes
 	if re.search(r"const BUILD_ID = ", text):
+		build_expr = (
+			"const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + "
+			"(typeof CEI_LAYOUT_VER !== 'undefined' ? CEI_LAYOUT_VER + '|' : '') + "
+			"JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});"
+		)
 		text2, n = re.subn(
 			r"const BUILD_ID = [^;]+;",
-			"const BUILD_ID = String(CEI_DEPLOY_ID) + '|' + JSON.stringify((GODOT_CONFIG && GODOT_CONFIG.fileSizes) || {});",
+			build_expr,
 			text,
 			count=1,
 		)

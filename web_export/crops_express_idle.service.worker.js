@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1786205192|d7b3c41d98bc';
+const CACHE_VERSION = '1786205281|98a7540ae1b2';
 /** @type {string} */
 const CACHE_PREFIX = 'Crops Express Id-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
