@@ -112,6 +112,9 @@ var _skill_tree_tuto_active: bool = false
 var _skill_detail: PanelContainer = null ## Tip sous le nœud sélectionné
 var _skill_nodes: Array[Control] = []
 var _skill_selected_id: String = ""
+var _skill_focus_pending_id: String = "" ## ouverture ciblée (ex. depuis commande verrouillée)
+var _skill_anchor_id: String = "" ## recentre après focus_base / resized
+var _skill_focus_retries: int = 0
 var _skill_pan_host: Control = null
 var _skill_map: Control = null
 var _skill_open_axis: String = "trunk" ## axe actif (onglet gauche)
@@ -1871,6 +1874,9 @@ func _setup_skill_tree_modal() -> void:
 
 func _close_skill_tree() -> void:
 	_skill_selected_id = ""
+	_skill_focus_pending_id = ""
+	_skill_anchor_id = ""
+	_skill_focus_retries = 0
 	_skill_open_axis = "trunk"
 	_skill_panning = false
 	_skill_pan_offset = Vector2.ZERO
@@ -2007,12 +2013,26 @@ func _make_skill_pc_badge() -> PanelContainer:
 
 
 func _open_skill_tree() -> void:
+	_open_skill_tree_focused("")
+
+
+func _open_skill_tree_focused(skill_id: String) -> void:
+	## Ouvre l'arbre ; si skill_id est renseigné, va sur son axe et sélectionne le nœud.
 	if skill_tree_overlay == null:
 		return
 	_skill_selected_id = ""
-	_skill_open_axis = "trunk"
 	_skill_pan_offset = Vector2.ZERO
 	_skill_zoom = 1.0
+	_skill_focus_retries = 0
+	if skill_id.is_empty():
+		_skill_open_axis = "trunk"
+		_skill_focus_pending_id = ""
+		_skill_anchor_id = ""
+	else:
+		var axis := GameState.skill_axis_id(skill_id)
+		_skill_open_axis = axis if not axis.is_empty() else "trunk"
+		_skill_focus_pending_id = skill_id
+		_skill_anchor_id = skill_id
 	if _skill_tree_tuto_active or _tutorial_mode == &"skill_tree":
 		_skill_tree_tuto_active = false
 		_tutorial_mode = &""
@@ -4216,6 +4236,7 @@ func _make_locked_order_slot_card(board_slot: int) -> PanelContainer:
 	panel.modulate = Color(0.82, 0.84, 0.80, 0.92)
 	panel.set_meta("board_slot", board_slot)
 	panel.set_meta("locked_slot", true)
+	panel.set_meta("unlock_skill_id", "order_slots")
 
 	var root := VBoxContainer.new()
 	root.add_theme_constant_override("separation", 6)
@@ -4233,6 +4254,7 @@ func _make_locked_order_slot_card(board_slot: int) -> PanelContainer:
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 8)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(row)
 
 	if _textures.has("ui_lock"):
@@ -4246,20 +4268,68 @@ func _make_locked_order_slot_card(board_slot: int) -> PanelContainer:
 		row.add_child(lock_ic)
 
 	var msg := Label.new()
-	msg.text = "Nouveau client — déblocage dans l'arbre de compétences"
+	msg.text = "Nouveau client — verrouillé par l'arbre de compétences"
 	msg.add_theme_font_size_override("font_size", 11)
 	msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	msg.modulate = Color(0.42, 0.38, 0.30)
 	msg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	msg.custom_minimum_size = Vector2(120, 0)
+	msg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(msg)
+
+	var goto_btn := _make_locked_order_skill_button()
+	root.add_child(goto_btn)
 
 	var spacer_bot := Control.new()
 	spacer_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	spacer_bot.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(spacer_bot)
 	return panel
+
+
+func _make_locked_order_skill_button() -> Button:
+	## CTA sur slot verrouillé → arbre, compétence « Carnet rempli ».
+	var btn := Button.new()
+	btn.text = "Voir dans l'arbre"
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	btn.custom_minimum_size = Vector2(0, 28)
+	btn.add_theme_font_size_override("font_size", 11)
+	btn.add_theme_color_override("font_color", Color(0.96, 0.94, 0.88))
+	btn.add_theme_color_override("font_hover_color", Color(1, 1, 1))
+	btn.add_theme_color_override("font_pressed_color", Color(0.92, 0.90, 0.84))
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	btn.expand_icon = true
+	btn.add_theme_constant_override("icon_max_width", 16)
+	if _textures.has("ui_skill_tree"):
+		btn.icon = _textures["ui_skill_tree"]
+		btn.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	var bg := Color(0.42, 0.58, 0.34, 0.95)
+	var bd := Color(0.28, 0.40, 0.22, 0.90)
+	for sn in ["normal", "hover", "pressed"]:
+		var st := StyleBoxFlat.new()
+		match sn:
+			"hover":
+				st.bg_color = bg.lightened(0.10)
+			"pressed":
+				st.bg_color = bg.darkened(0.08)
+			_:
+				st.bg_color = bg
+		st.border_color = bd
+		st.set_border_width_all(1)
+		st.set_corner_radius_all(8)
+		st.content_margin_left = 10
+		st.content_margin_right = 10
+		st.content_margin_top = 4
+		st.content_margin_bottom = 4
+		btn.add_theme_stylebox_override(sn, st)
+	btn.pressed.connect(_on_locked_order_skill_pressed)
+	return btn
+
+
+func _on_locked_order_skill_pressed() -> void:
+	_open_skill_tree_focused("order_slots")
 
 
 func _make_order_card(m: MissionData) -> PanelContainer:
@@ -5533,6 +5603,47 @@ func _fill_skills() -> void:
 	_skill_selected_id = ""
 	call_deferred("_highlight_selected_skill_node")
 	call_deferred("_animate_skill_branch_reveal")
+	if not _skill_focus_pending_id.is_empty():
+		## Après focus_base : sélectionne + centre la compétence demandée.
+		call_deferred("_skill_apply_pending_focus")
+
+
+func _skill_apply_pending_focus() -> void:
+	if _skill_focus_pending_id.is_empty():
+		return
+	var sid := _skill_focus_pending_id
+	_skill_focus_pending_id = ""
+	_skill_center_on_skill(sid)
+
+
+func _skill_center_on_skill(skill_id: String) -> void:
+	## Sélectionne un nœud et le place au centre vertical de la vue.
+	if skill_id.is_empty():
+		return
+	if _skill_map == null or _skill_pan_host == null:
+		return
+	if not is_instance_valid(_skill_map) or not is_instance_valid(_skill_pan_host):
+		return
+	var node := _find_skill_node(skill_id)
+	var view := _skill_pan_host.size
+	if node == null or not is_instance_valid(node) or view.y < 8.0:
+		_skill_focus_retries += 1
+		if _skill_focus_retries > 10:
+			_skill_focus_retries = 0
+			return
+		_skill_focus_pending_id = skill_id
+		call_deferred("_skill_apply_pending_focus")
+		return
+	_skill_focus_retries = 0
+	if _skill_selected_id != skill_id:
+		_select_skill_node(skill_id)
+	else:
+		_highlight_selected_skill_node()
+		_refresh_skill_detail()
+	var node_center := node.position + node.size * 0.5
+	_skill_map.position.y = view.y * 0.42 - node_center.y * _skill_zoom
+	_skill_clamp_pan()
+	_skill_pan_offset = _skill_map.position
 
 
 func _make_skill_zoom_btn(label: String, dir: int) -> Button:
@@ -5593,9 +5704,13 @@ func _skill_focus_base() -> void:
 	_skill_map.scale = Vector2(_skill_zoom, _skill_zoom)
 	_skill_map.position = (view - map_sz * _skill_zoom) * 0.5
 	_skill_pan_offset = _skill_map.position
+	## Deep-link (commande verrouillée) : recentre sur la compétence cible.
+	if not _skill_anchor_id.is_empty():
+		call_deferred("_skill_center_on_skill", _skill_anchor_id)
 
 
 func _skill_center_on_hub() -> void:
+	_skill_anchor_id = ""
 	_skill_focus_base()
 
 
@@ -6037,6 +6152,9 @@ func _skill_open_axis_view(axis: String) -> void:
 	Sfx.ui_tab()
 	_skill_open_axis = axis
 	_skill_selected_id = ""
+	_skill_focus_pending_id = ""
+	_skill_anchor_id = ""
+	_skill_focus_retries = 0
 	_skill_pan_offset = Vector2.ZERO
 	_skill_zoom = 1.0
 	_rebuild_skill_modal()
