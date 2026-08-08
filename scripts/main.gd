@@ -114,6 +114,7 @@ var _skill_nodes: Array[Control] = []
 var _skill_selected_id: String = ""
 var _skill_pan_host: Control = null
 var _skill_map: Control = null
+var _skill_open_axis: String = "trunk" ## axe actif (onglet gauche)
 const _SkillLevelRing := preload("res://scripts/ui/skill_level_ring.gd")
 var _skill_panning: bool = false
 var _skill_pan_last: Vector2 = Vector2.ZERO
@@ -123,6 +124,12 @@ var _skill_pinch_dist: float = -1.0
 var _skill_touch_pts: Dictionary = {} ## index → position (pinch)
 const SKILL_ZOOM_MIN := 0.32
 const SKILL_ZOOM_MAX := 2.20
+const _SKILL_AXES := [
+	{"id": "trunk", "label": "Culture", "icon": "ui_sprout", "color": Color(0.35, 0.72, 0.42)},
+	{"id": "combo", "label": "Combo livraison", "icon": "ui_logo", "color": Color(0.95, 0.35, 0.25)},
+	{"id": "orders", "label": "Commandes", "icon": "ui_mission", "color": Color(0.95, 0.55, 0.22)},
+	{"id": "boutique", "label": "Boutique", "icon": "ui_tab_shop", "color": Color(0.95, 0.78, 0.22)},
+]
 ## Tooltip survol uniquement (pas d'?pinglage).
 var _combo_status_l: Label = null
 var _combo_reward_l: Label = null
@@ -255,16 +262,44 @@ func _build_settings_content() -> void:
 	settings_vbox.add_child(head)
 
 	var hint := Label.new()
-	hint.text = "Options a venir - placeholders pour l'instant."
+	hint.text = "Musique et autres options : a venir."
 	hint.modulate = Color(0.75, 0.85, 0.78)
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	settings_vbox.add_child(hint)
 
+	## Volume SFX (musique plus tard).
+	var son_line := HBoxContainer.new()
+	son_line.add_theme_constant_override("separation", 10)
+	var son_lab := Label.new()
+	son_lab.text = "Effets sonores"
+	son_lab.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	son_lab.add_theme_font_size_override("font_size", 14)
+	son_line.add_child(son_lab)
+	var son_pct := Label.new()
+	son_pct.custom_minimum_size = Vector2(42, 0)
+	son_pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	son_pct.add_theme_font_size_override("font_size", 13)
+	son_pct.text = "%d%%" % int(round(Sfx.volume_linear * 100.0))
+	son_line.add_child(son_pct)
+	settings_vbox.add_child(son_line)
+	var son_slider := HSlider.new()
+	son_slider.min_value = 0.0
+	son_slider.max_value = 1.0
+	son_slider.step = 0.05
+	son_slider.value = Sfx.volume_linear
+	son_slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	son_slider.value_changed.connect(func(v: float):
+		Sfx.set_volume_linear(v)
+		son_pct.text = "%d%%" % int(round(v * 100.0))
+		if v > 0.001:
+			Sfx.ui_click()
+	)
+	settings_vbox.add_child(son_slider)
+
 	for row in [
-		["Langue", "Fran?ais"],
-		["Son", "100%"],
-		["Musique", "80%"],
+		["Langue", "Francais"],
+		["Musique", "Bientot"],
 		["Touches", "1 2 3 4"],
 	]:
 		var line := HBoxContainer.new()
@@ -387,12 +422,14 @@ func _open_settings() -> void:
 	if settings_overlay:
 		settings_overlay.visible = true
 		settings_overlay.move_to_front()
+		Sfx.ui_open()
 
 
 func _close_settings() -> void:
 	_settings_reset_armed = false
 	if settings_overlay:
 		settings_overlay.visible = false
+		Sfx.ui_close()
 
 
 func _hide_hint_labels() -> void:
@@ -560,7 +597,7 @@ func _load_textures() -> void:
 		"shop_speed", "shop_plot", "shop_frenzy", "shop_money", "shop_click",
 		"btn_check", "btn_cancel", "xp", "chrono", "truck",
 		"tab_shop", "tab_prestige", "combo", "target",
-		"skill_tree", "skill_parchment", "click_hand", "lock", "settings",
+		"skill_tree", "skill_parchment", "click_hand", "click_zone", "sprout", "lock", "settings",
 		"fertilizer", "gardener", "gardener_claw", "auto_planter", "auto_harvester", "auto_delivery",
 		"player_avatar", "green_thumb", "edit_pen", "hourglass",
 		"zoom_in", "zoom_out",
@@ -830,6 +867,7 @@ func _connect_signals() -> void:
 	GameState.skills_changed.connect(func():
 		_refresh_player_hud()
 		call_deferred("_ensure_combo_panel")
+		call_deferred("_rebuild_missions")
 		if skill_tree_overlay and skill_tree_overlay.visible:
 			call_deferred("_rebuild_skill_modal")
 		else:
@@ -1833,6 +1871,7 @@ func _setup_skill_tree_modal() -> void:
 
 func _close_skill_tree() -> void:
 	_skill_selected_id = ""
+	_skill_open_axis = "trunk"
 	_skill_panning = false
 	_skill_pan_offset = Vector2.ZERO
 	_skill_zoom = 1.0
@@ -1840,6 +1879,8 @@ func _close_skill_tree() -> void:
 	_skill_touch_pts.clear()
 	_skill_detail = null
 	if skill_tree_overlay:
+		if skill_tree_overlay.visible:
+			Sfx.ui_close()
 		skill_tree_overlay.visible = false
 
 
@@ -1969,6 +2010,7 @@ func _open_skill_tree() -> void:
 	if skill_tree_overlay == null:
 		return
 	_skill_selected_id = ""
+	_skill_open_axis = "trunk"
 	_skill_pan_offset = Vector2.ZERO
 	_skill_zoom = 1.0
 	if _skill_tree_tuto_active or _tutorial_mode == &"skill_tree":
@@ -1983,6 +2025,7 @@ func _open_skill_tree() -> void:
 	skill_tree_overlay.top_level = true
 	skill_tree_overlay.visible = true
 	skill_tree_overlay.move_to_front()
+	Sfx.ui_open()
 
 
 func _on_level(level: int, _sp: int) -> void:
@@ -2154,17 +2197,28 @@ func _read_raw_safe_insets_css() -> Vector4:
 			float(d.get("r", 0.0)),
 			float(d.get("b", 0.0))
 		)
-	## iOS / Android natif
+	## iOS / Android natif — pas le desktop : get_display_safe_area() y renvoie
+	## le usable rect d'écran (origine virtuelle multi-moniteur ≠ (0,0)), ce qui
+	## poussait Root hors champ (ex. offset_left ≈ 1920 sur un 2e écran).
+	if not OS.has_feature("mobile"):
+		return Vector4.ZERO
 	var safe := DisplayServer.get_display_safe_area()
-	var full := Rect2i(Vector2i.ZERO, DisplayServer.window_get_size())
+	var full := Rect2i(DisplayServer.window_get_position(), DisplayServer.window_get_size())
 	if full.size.x <= 0 or full.size.y <= 0:
 		return Vector4.ZERO
-	## Convertit la safe area ?cran ? insets (approx. fen?tre principale).
+	## Convertit la safe area écran → insets relatifs à la fenêtre.
 	var left := float(maxi(0, safe.position.x - full.position.x))
 	var top := float(maxi(0, safe.position.y - full.position.y))
 	var right := float(maxi(0, (full.position.x + full.size.x) - (safe.position.x + safe.size.x)))
 	var bottom := float(maxi(0, (full.position.y + full.size.y) - (safe.position.y + safe.size.y)))
-	return Vector4(left, top, right, bottom)
+	## Garde-fou : un notch ne fait pas des milliers de px.
+	const MAX_INSET := 120.0
+	return Vector4(
+		minf(left, MAX_INSET),
+		minf(top, MAX_INSET),
+		minf(right, MAX_INSET),
+		minf(bottom, MAX_INSET)
+	)
 
 
 func _fit_scroll_widths() -> void:
@@ -2765,6 +2819,8 @@ func _tab_def(id: String) -> Dictionary:
 
 
 func _select_tab(id: String) -> void:
+	if id != _current_tab:
+		Sfx.ui_tab()
 	for tid in _tab_buttons:
 		var b: Button = _tab_buttons[tid]
 		var on: bool = tid == id
@@ -3171,8 +3227,13 @@ func _open_terrain_edit() -> void:
 		_clear_finger_tutorial()
 	var modal: Control = TerrainEditModalScript.present(self, _textures)
 	_active_terrain_modal = modal
+	Sfx.ui_open()
 	if modal.has_signal("closed"):
-		modal.closed.connect(func(_applied: bool):
+		modal.closed.connect(func(applied: bool):
+			if applied:
+				Sfx.ui_confirm()
+			else:
+				Sfx.ui_close()
 			_active_terrain_modal = null
 			_update_plot_visuals()
 			call_deferred("_center_field")
@@ -3663,6 +3724,8 @@ func _on_seed_picked(i: int) -> void:
 		if need_id != &"" and GameState.crops[i].id != need_id:
 			_show_toast("Tuto - choisis %s" % GameState.crop_display_name(need_id))
 			return
+	if GameState.selected_crop_index != i:
+		Sfx.ui_click()
 	GameState.selected_crop_index = i
 	var seed_style := _theme.get_stylebox("panel", "SeedCard") as StyleBoxFlat if _theme else _card_style
 	for j in _seed_buttons.size():
@@ -3946,11 +4009,20 @@ func _rebuild_missions() -> void:
 			"idx": i,
 			"enter": will_enter_r,
 		})
+	## Emplacements verrouillés (carnet) : slots 2–3 tant que non débloqués dans l'arbre.
+	var unlocked_slots := GameState.skill_unlocked_order_slots()
+	for lock_i in range(unlocked_slots, GameState.MAX_ORDER_SLOTS):
+		if blocked_slots.has(lock_i):
+			continue
+		board.append({"slot": lock_i, "kind": "locked", "enter": false})
 	board.sort_custom(func(a, b): return int(a["slot"]) < int(b["slot"]))
 	for entry in board:
 		var card: Control = null
-		if str(entry["kind"]) == "order":
+		var kind := str(entry["kind"])
+		if kind == "order":
 			card = _make_order_card(entry["mission"])
+		elif kind == "locked":
+			card = _make_locked_order_slot_card(int(entry["slot"]))
 		else:
 			card = _make_refresh_wait_card(entry["refresh"], int(entry["idx"]))
 		if bool(entry.get("enter", false)):
@@ -4131,6 +4203,57 @@ func _make_refresh_wait_card(slot: Dictionary, refresh_idx: int = 0) -> PanelCon
 	timer_l.modulate = accent
 	timer_l.set_meta("timer_refresh_idx", refresh_idx)
 	time_row.add_child(timer_l)
+
+	var spacer_bot := Control.new()
+	spacer_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	spacer_bot.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(spacer_bot)
+	return panel
+
+
+func _make_locked_order_slot_card(board_slot: int) -> PanelContainer:
+	var panel := _styled_order_card()
+	panel.modulate = Color(0.82, 0.84, 0.80, 0.92)
+	panel.set_meta("board_slot", board_slot)
+	panel.set_meta("locked_slot", true)
+
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 6)
+	root.alignment = BoxContainer.ALIGNMENT_CENTER
+	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	panel.add_child(root)
+
+	var spacer_top := Control.new()
+	spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	spacer_top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(spacer_top)
+
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 8)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.add_child(row)
+
+	if _textures.has("ui_lock"):
+		var lock_ic := TextureRect.new()
+		lock_ic.custom_minimum_size = Vector2(22, 22)
+		lock_ic.texture = _textures["ui_lock"]
+		lock_ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		lock_ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		lock_ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		lock_ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row.add_child(lock_ic)
+
+	var msg := Label.new()
+	msg.text = "Nouveau client — déblocage dans l'arbre de compétences"
+	msg.add_theme_font_size_override("font_size", 11)
+	msg.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	msg.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	msg.modulate = Color(0.42, 0.38, 0.30)
+	msg.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	msg.custom_minimum_size = Vector2(120, 0)
+	root.add_child(msg)
 
 	var spacer_bot := Control.new()
 	spacer_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -4463,15 +4586,21 @@ func _open_sell_modal(crop_id: StringName) -> void:
 		_active_sell_modal.dismiss()
 	var modal := SellModalScript.present(self, crop_id, _textures)
 	_active_sell_modal = modal
+	Sfx.ui_open()
+	var sold_ok := {"v": false}
 	if GameState.is_tutorial_sell_step():
 		## Passe imm?diatement le doigt sur ? Vendre ?.
 		_on_tutorial_nudge(&"sell_confirm")
 	modal.sold.connect(func(_cid: StringName, _amt: int, _gold: int):
+		sold_ok["v"] = true
+		Sfx.play("sell", 0.02, 1.0, 60)
 		_rebuild_stock()
 		if _current_tab == "missions":
 			_rebuild_side()
 	)
 	modal.closed.connect(func():
+		if not bool(sold_ok["v"]):
+			Sfx.ui_close()
 		if _active_sell_modal == modal:
 			_active_sell_modal = null
 		_rebuild_stock()
@@ -4568,7 +4697,11 @@ func _rebuild_side() -> void:
 
 func _fill_missions_tab() -> void:
 	MissionsPanelScript.fill(side_content, _textures, func(qid: String):
-		GameState.claim_board_quest(qid)
+		var n := GameState.claim_board_quest(qid)
+		if n > 0:
+			Sfx.play("mission_claim", 0.02, 1.0, 80)
+		else:
+			Sfx.ui_deny()
 		_rebuild_side()
 	)
 
@@ -4650,7 +4783,12 @@ func _fill_boosts() -> void:
 		sp, sp_max,
 		"MAX" if sp_maxed else str(GameState.get_boost_cost("speed")),
 		(not sp_maxed) and GameState.money >= GameState.get_boost_cost("speed"),
-		func(): GameState.buy_boost("speed"); _rebuild_side(),
+		func():
+			if GameState.buy_boost("speed"):
+				Sfx.play("coin", 0.03, 1.0, 60)
+			else:
+				Sfx.ui_deny()
+			_rebuild_side(),
 		"ui_shop_speed",
 		not sp_maxed,
 		"speed",
@@ -4682,7 +4820,12 @@ func _fill_boosts() -> void:
 		cl, cl_max,
 		"MAX" if cl_maxed else str(GameState.get_boost_cost("click")),
 		(not cl_maxed) and GameState.money >= GameState.get_boost_cost("click"),
-		func(): GameState.buy_boost("click"); _rebuild_side(),
+		func():
+			if GameState.buy_boost("click"):
+				Sfx.play("coin", 0.03, 1.0, 60)
+			else:
+				Sfx.ui_deny()
+			_rebuild_side(),
 		"ui_shop_click",
 		not cl_maxed,
 		"click",
@@ -4712,7 +4855,12 @@ func _fill_boosts() -> void:
 		yl, yl_max,
 		"MAX" if yl_maxed else str(GameState.get_boost_cost("yield")),
 		(not yl_maxed) and GameState.money >= GameState.get_boost_cost("yield"),
-		func(): GameState.buy_boost("yield"); _rebuild_side(),
+		func():
+			if GameState.buy_boost("yield"):
+				Sfx.play("coin", 0.03, 1.0, 60)
+			else:
+				Sfx.ui_deny()
+			_rebuild_side(),
 		"ui_shop_frenzy",
 		not yl_maxed,
 		"yield",
@@ -4738,7 +4886,14 @@ func _fill_boosts() -> void:
 		plots_now, GameState.MAX_PLOTS,
 		"MAX" if pl_maxed else str(GameState.get_boost_cost("plot")),
 		(not pl_maxed) and GameState.money >= GameState.get_boost_cost("plot"),
-		func(): GameState.buy_boost("plot"); _rebuild_side(); _update_edit_terrain_button(); call_deferred("_center_field"),
+		func():
+			if GameState.buy_boost("plot"):
+				Sfx.play("coin", 0.03, 1.0, 60)
+			else:
+				Sfx.ui_deny()
+			_rebuild_side()
+			_update_edit_terrain_button()
+			call_deferred("_center_field"),
 		"ui_shop_plot",
 		not pl_maxed,
 		"plot",
@@ -4809,7 +4964,13 @@ func _add_machine_shop_row(
 		owned, max_owned,
 		"MAX" if maxed else str(cost),
 		(not maxed) and GameState.money >= cost and GameState.can_buy_machine(machine_id),
-		func(): GameState.buy_machine(machine_id); _rebuild_side(); _update_edit_terrain_button(),
+		func():
+			if GameState.buy_machine(machine_id):
+				Sfx.play("coin", 0.03, 1.0, 60)
+			else:
+				Sfx.ui_deny()
+			_rebuild_side()
+			_update_edit_terrain_button(),
 		icon_key,
 		not maxed,
 		""
@@ -5283,7 +5444,7 @@ func _scroll_boost_info_to_current(scroll: ScrollContainer, list: VBoxContainer,
 
 
 func _fill_skills() -> void:
-	## Arbre plein largeur + tip sous le nœud sélectionné.
+	## Onglets gauche (4 axes) + mindmap de l'axe actif (Culture par défaut).
 	var host: VBoxContainer = skill_tree_vbox
 	if host == null:
 		return
@@ -5292,6 +5453,8 @@ func _fill_skills() -> void:
 	_skill_panning = false
 	_skill_pinch_dist = -1.0
 	_skill_touch_pts.clear()
+	if _skill_open_axis.is_empty():
+		_skill_open_axis = "trunk"
 
 	var header := HBoxContainer.new()
 	header.add_theme_constant_override("separation", 8)
@@ -5307,13 +5470,30 @@ func _fill_skills() -> void:
 	title.add_theme_color_override("font_color", Color(0.32, 0.22, 0.12))
 	title_box.add_child(title)
 	var hint := Label.new()
-	hint.text = "Glisse pour scroller · touche une compétence"
+	hint.text = "%s · touche une compétence" % _skill_axis_label(_skill_open_axis)
 	hint.add_theme_font_size_override("font_size", 11)
 	hint.add_theme_color_override("font_color", Color(0.48, 0.38, 0.26))
 	title_box.add_child(hint)
 
 	header.add_child(_make_skill_pc_badge())
 	header.add_child(_make_ui_close_button(_close_skill_tree, true))
+
+	var body := HBoxContainer.new()
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 10)
+	host.add_child(body)
+
+	var tabs := VBoxContainer.new()
+	tabs.name = "SkillAxisTabs"
+	tabs.custom_minimum_size = Vector2(112, 0)
+	tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	tabs.add_theme_constant_override("separation", 8)
+	body.add_child(tabs)
+	for a in _SKILL_AXES:
+		tabs.add_child(_make_skill_axis_tab(
+			str(a["id"]), str(a["label"]), str(a["icon"]), a["color"] as Color
+		))
 
 	var stage := PanelContainer.new()
 	stage.name = "SkillStage"
@@ -5329,7 +5509,7 @@ func _fill_skills() -> void:
 	stage_st.content_margin_top = 0
 	stage_st.content_margin_bottom = 0
 	stage.add_theme_stylebox_override("panel", stage_st)
-	host.add_child(stage)
+	body.add_child(stage)
 
 	var pan_host := Control.new()
 	pan_host.name = "SkillPanHost"
@@ -5337,31 +5517,22 @@ func _fill_skills() -> void:
 	pan_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	pan_host.clip_contents = true
 	pan_host.mouse_filter = Control.MOUSE_FILTER_STOP
-	pan_host.mouse_default_cursor_shape = Control.CURSOR_MOVE
+	pan_host.mouse_default_cursor_shape = Control.CURSOR_ARROW
 	stage.add_child(pan_host)
 	_skill_pan_host = pan_host
 
-	var map := _build_skill_mindmap()
+	var map := _build_skill_branch_map(_skill_open_axis)
 	pan_host.add_child(map)
 	_skill_map = map
 	map.scale = Vector2(_skill_zoom, _skill_zoom)
-
 	pan_host.resized.connect(func():
 		if is_instance_valid(map) and is_instance_valid(pan_host):
 			call_deferred("_skill_focus_base")
 	)
-	if _skill_pan_offset != Vector2.ZERO and _skill_zoom > 0.01:
-		map.position = _skill_pan_offset
-		map.scale = Vector2(_skill_zoom, _skill_zoom)
-		call_deferred("_skill_clamp_pan")
-	else:
-		call_deferred("_skill_focus_base")
-
-	pan_host.gui_input.connect(_on_skill_pan_input)
-
-	## Pas de tooltip à l'ouverture — sélection vide.
+	call_deferred("_skill_focus_base")
 	_skill_selected_id = ""
 	call_deferred("_highlight_selected_skill_node")
+	call_deferred("_animate_skill_branch_reveal")
 
 
 func _make_skill_zoom_btn(label: String, dir: int) -> Button:
@@ -5406,7 +5577,7 @@ func _skill_fit_overview() -> void:
 
 
 func _skill_focus_base() -> void:
-	## Largeur calée sur le panneau (= largeur parchemin) ; scroll vertical uniquement.
+	## Centre la branche à échelle lisible (≈1×) ; ne dézoome que si vraiment nécessaire.
 	if _skill_map == null or _skill_pan_host == null:
 		return
 	if not is_instance_valid(_skill_map) or not is_instance_valid(_skill_pan_host):
@@ -5416,12 +5587,12 @@ func _skill_focus_base() -> void:
 		call_deferred("_skill_focus_base")
 		return
 	var map_sz: Vector2 = _skill_map.get_meta("map_size", _skill_map.size)
-	var hub: Vector2 = _skill_map.get_meta("hub_pos", Vector2(map_sz.x * 0.5, map_sz.y * 0.1))
-	## Zoom = largeur exacte (pas de dézoom / bandes latérales).
-	_skill_zoom = view.x / maxf(1.0, map_sz.x)
+	var z_fit := mini(view.x / maxf(1.0, map_sz.x), view.y / maxf(1.0, map_sz.y)) * 0.96
+	## Échelle native préférée ; plancher haut pour garder les nœuds lisibles.
+	_skill_zoom = clampf(z_fit, 0.92, 1.25)
 	_skill_map.scale = Vector2(_skill_zoom, _skill_zoom)
-	_skill_map.position = Vector2(0.0, view.y * 0.06) - Vector2(0.0, hub.y * _skill_zoom)
-	_skill_clamp_pan()
+	_skill_map.position = (view - map_sz * _skill_zoom) * 0.5
+	_skill_pan_offset = _skill_map.position
 
 
 func _skill_center_on_hub() -> void:
@@ -5572,12 +5743,17 @@ func _on_skill_detail_buy_pressed() -> void:
 		return
 	var sid := _skill_selected_id
 	if GameState.buy_skill(sid):
+		Sfx.play("skill_buy", 0.02, 1.0, 80)
 		_rebuild_skill_modal()
 		_refresh_player_hud()
 		call_deferred("_select_skill_node", sid)
+	else:
+		Sfx.ui_deny()
 
 
 func _select_skill_node(skill_id: String) -> void:
+	if skill_id != _skill_selected_id:
+		Sfx.ui_click()
 	_skill_selected_id = skill_id
 	_highlight_selected_skill_node()
 	_refresh_skill_detail()
@@ -5841,136 +6017,374 @@ func _skill_petal_pos(hub: Vector2, ang: float, dist: float, lateral: float = 0.
 	return hub + forward * dist + side * lateral
 
 
-func _build_skill_mindmap() -> Control:
-	## 5 rayons indépendants (têtes à 1 PC) : Clients / Boost / Clics / Or / Expérience.
-	const MAP_W := 1024.0
-	const MAP_H := 1520.0
-	const NODE_SZ := Vector2(68, 68)
-	const ROOT_SZ := Vector2(78, 78)
-	const BR := 48.0
-	const X_ORDERS := 100.0
-	const X_COMBO := 290.0
-	const X_CLICS := MAP_W * 0.5
-	const X_MONEY := 730.0
-	const X_XP := 920.0
-	const Y_ORIGIN := 64.0
-	const Y_ROOT := 220.0
-	const Y_L1 := 380.0
-	const Y_L2 := 540.0
-	const Y_L3 := 700.0
-	const Y_L4 := 880.0
-	const Y_L5 := 1060.0
+func _skill_axis_label(axis: String) -> String:
+	for a in _SKILL_AXES:
+		if str(a["id"]) == axis:
+			return str(a["label"])
+	return "Compétences"
+
+
+func _skill_axis_color(axis: String) -> Color:
+	for a in _SKILL_AXES:
+		if str(a["id"]) == axis:
+			return a["color"] as Color
+	return Color(0.42, 0.68, 0.38)
+
+
+func _skill_open_axis_view(axis: String) -> void:
+	if axis == _skill_open_axis:
+		return
+	Sfx.ui_tab()
+	_skill_open_axis = axis
+	_skill_selected_id = ""
+	_skill_pan_offset = Vector2.ZERO
+	_skill_zoom = 1.0
+	_rebuild_skill_modal()
+
+
+func _make_skill_axis_tab(axis: String, label: String, icon_key: String, col: Color) -> Control:
+	var selected := axis == _skill_open_axis
+	var spent := GameState.axis_pc_spent(axis)
+	var total := GameState.axis_pc_total(axis)
+	var can_buy := GameState.axis_has_affordable_skill(axis)
+
+	var card := PanelContainer.new()
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.set_meta("axis_id", axis)
+	var st := StyleBoxFlat.new()
+	if selected:
+		st.bg_color = Color(0.98, 0.95, 0.86, 0.98)
+		st.border_color = Color(col.r, col.g, col.b, 1.0)
+		st.set_border_width_all(3)
+		st.shadow_color = Color(col.r, col.g, col.b, 0.28)
+		st.shadow_size = 6
+	else:
+		st.bg_color = Color(0.90, 0.84, 0.70, 0.92)
+		st.border_color = Color(col.r, col.g, col.b, 0.55)
+		st.set_border_width_all(2)
+	st.set_corner_radius_all(12)
+	st.content_margin_left = 8
+	st.content_margin_right = 8
+	st.content_margin_top = 8
+	st.content_margin_bottom = 8
+	card.add_theme_stylebox_override("panel", st)
+
+	var col_box := VBoxContainer.new()
+	col_box.add_theme_constant_override("separation", 4)
+	col_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	col_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(col_box)
+
+	if _textures.has(icon_key):
+		var ic := TextureRect.new()
+		ic.custom_minimum_size = Vector2(46, 46)
+		ic.texture = _textures[icon_key]
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var wrap := CenterContainer.new()
+		wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		wrap.add_child(ic)
+		col_box.add_child(wrap)
+
+	var title_l := Label.new()
+	title_l.text = label
+	title_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	title_l.add_theme_font_size_override("font_size", 11)
+	title_l.add_theme_color_override("font_color", Color(0.28, 0.18, 0.08) if selected else Color(0.40, 0.30, 0.18))
+	title_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col_box.add_child(title_l)
+
+	var pc_row := HBoxContainer.new()
+	pc_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	pc_row.add_theme_constant_override("separation", 4)
+	pc_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col_box.add_child(pc_row)
+	if _textures.has("ui_coin_skill"):
+		var pc_ic := TextureRect.new()
+		pc_ic.custom_minimum_size = Vector2(16, 16)
+		pc_ic.texture = _textures["ui_coin_skill"]
+		pc_ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pc_ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pc_ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		pc_ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pc_row.add_child(pc_ic)
+	var pc_l := Label.new()
+	pc_l.text = "%d/%d" % [spent, total]
+	pc_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	pc_l.add_theme_font_size_override("font_size", 11)
+	pc_l.add_theme_color_override("font_color", Color(0.45, 0.32, 0.14))
+	pc_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pc_row.add_child(pc_l)
+
+	if can_buy and not selected:
+		var tw := card.create_tween().set_loops()
+		tw.tween_property(card, "modulate", Color(1.05, 1.02, 0.94), 0.75)
+		tw.tween_property(card, "modulate", Color.WHITE, 0.75)
+
+	card.gui_input.connect(func(ev: InputEvent):
+		if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+			get_viewport().set_input_as_handled()
+			_skill_open_axis_view(axis)
+	)
+	return card
+
+
+func _build_skill_hub_view() -> Control:
+	var root := MarginContainer.new()
+	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_theme_constant_override("margin_left", 18)
+	root.add_theme_constant_override("margin_right", 18)
+	root.add_theme_constant_override("margin_top", 16)
+	root.add_theme_constant_override("margin_bottom", 16)
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(center)
+
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 14)
+	grid.add_theme_constant_override("v_separation", 14)
+	grid.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(grid)
+
+	for a in _SKILL_AXES:
+		grid.add_child(_make_skill_axis_card(str(a["id"]), str(a["label"]), str(a["icon"]), a["color"] as Color))
+	return root
+
+
+func _make_skill_axis_card(axis: String, label: String, icon_key: String, col: Color) -> Control:
+	var spent := GameState.axis_pc_spent(axis)
+	var total := GameState.axis_pc_total(axis)
+	var can_buy := GameState.axis_has_affordable_skill(axis)
+
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(220, 168)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	card.set_meta("axis_id", axis)
+	var st := StyleBoxFlat.new()
+	st.bg_color = Color(0.98, 0.95, 0.86, 0.98)
+	st.border_color = Color(col.r, col.g, col.b, 0.92)
+	st.set_border_width_all(3)
+	st.set_corner_radius_all(18)
+	st.content_margin_left = 14
+	st.content_margin_right = 14
+	st.content_margin_top = 12
+	st.content_margin_bottom = 12
+	st.shadow_color = Color(0.12, 0.08, 0.04, 0.22)
+	st.shadow_size = 8
+	card.add_theme_stylebox_override("panel", st)
+
+	var col_box := VBoxContainer.new()
+	col_box.add_theme_constant_override("separation", 8)
+	col_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	col_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	card.add_child(col_box)
+
+	var icon_wrap := CenterContainer.new()
+	icon_wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col_box.add_child(icon_wrap)
+	if _textures.has(icon_key):
+		var ic := TextureRect.new()
+		ic.custom_minimum_size = Vector2(64, 64)
+		ic.texture = _textures[icon_key]
+		ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		icon_wrap.add_child(ic)
+
+	var title_l := Label.new()
+	title_l.text = label
+	title_l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title_l.add_theme_font_size_override("font_size", 16)
+	title_l.add_theme_color_override("font_color", Color(0.28, 0.18, 0.08))
+	title_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col_box.add_child(title_l)
+
+	var pc_row := HBoxContainer.new()
+	pc_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	pc_row.add_theme_constant_override("separation", 6)
+	pc_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	col_box.add_child(pc_row)
+	if _textures.has("ui_coin_skill"):
+		var pc_ic := TextureRect.new()
+		pc_ic.custom_minimum_size = Vector2(20, 20)
+		pc_ic.texture = _textures["ui_coin_skill"]
+		pc_ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		pc_ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		pc_ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		pc_row.add_child(pc_ic)
+	var pc_l := Label.new()
+	pc_l.text = "%d / %d" % [spent, total]
+	pc_l.add_theme_font_size_override("font_size", 14)
+	pc_l.add_theme_color_override("font_color", Color(0.42, 0.30, 0.12))
+	pc_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	pc_row.add_child(pc_l)
+
+	if can_buy:
+		var pill := Label.new()
+		pill.text = "PC disponible"
+		pill.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		pill.add_theme_font_size_override("font_size", 11)
+		pill.add_theme_color_override("font_color", Color(0.55, 0.36, 0.08))
+		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		col_box.add_child(pill)
+		var tw := card.create_tween().set_loops()
+		tw.tween_property(card, "modulate", Color(1.06, 1.03, 0.94), 0.7)
+		tw.tween_property(card, "modulate", Color.WHITE, 0.7)
+
+	card.gui_input.connect(func(ev: InputEvent):
+		if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
+			get_viewport().set_input_as_handled()
+			_skill_open_axis_view(axis)
+	)
+	card.mouse_entered.connect(func():
+		if is_instance_valid(card):
+			card.pivot_offset = card.size * 0.5
+			card.scale = Vector2(1.03, 1.03)
+	)
+	card.mouse_exited.connect(func():
+		if is_instance_valid(card):
+			card.scale = Vector2.ONE
+	)
+	return card
+
+
+func _animate_skill_hub_reveal(hub: Control) -> void:
+	if hub == null or not is_instance_valid(hub):
+		return
+	var cards: Array[Control] = []
+	_collect_axis_cards(hub, cards)
+	var i := 0
+	for card in cards:
+		card.modulate.a = 0.0
+		card.scale = Vector2(0.82, 0.82)
+		var tw := card.create_tween()
+		tw.tween_interval(0.05 * float(i))
+		tw.parallel().tween_property(card, "modulate:a", 1.0, 0.22)
+		tw.parallel().tween_property(card, "scale", Vector2.ONE, 0.32).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		i += 1
+
+
+func _collect_axis_cards(n: Node, out: Array[Control]) -> void:
+	if n is Control and (n as Control).has_meta("axis_id"):
+		out.append(n as Control)
+	for c in n.get_children():
+		_collect_axis_cards(c, out)
+
+
+func _animate_skill_branch_reveal() -> void:
+	if _skill_map == null or not is_instance_valid(_skill_map):
+		return
+	## Ne pas masquer les liens (sinon le tween peut les laisser invisibles).
+	var i := 0
+	for node in _skill_nodes:
+		if not is_instance_valid(node):
+			continue
+		node.modulate.a = 0.0
+		node.scale = Vector2(0.4, 0.4)
+		var tw := node.create_tween()
+		tw.tween_interval(0.045 * float(i))
+		tw.parallel().tween_property(node, "modulate:a", 1.0, 0.2)
+		tw.parallel().tween_property(node, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+		i += 1
+
+
+func _axis_branch_layout(axis: String) -> Dictionary:
+	## Layout horizontal (colonnes L→R) pour tenir dans le cadre.
+	const Y := 175.0
+	const YS := 96.0
+	const X0 := 70.0
+	const XS := 118.0
+	match axis:
+		"trunk":
+			return {
+				"root_hub": Vector2(X0, Y),
+				"click_zone_wide": Vector2(X0 + XS, Y - YS * 0.55),
+				"click_double": Vector2(X0 + XS, Y + YS * 0.55),
+				"click_agile": Vector2(X0 + XS * 2.0, Y - YS * 0.55),
+				"click_momentum": Vector2(X0 + XS * 2.0, Y + YS * 0.55),
+				"harvest_xp": Vector2(X0 + XS * 3.0, Y - YS * 0.55),
+				"harvest_pc": Vector2(X0 + XS * 3.0, Y + YS * 0.55),
+				"harvest_gold": Vector2(X0 + XS * 4.0, Y),
+			}
+		"combo":
+			return {
+				"combo_flash": Vector2(X0, Y),
+				"combo_gold": Vector2(X0 + XS, Y - YS * 0.75),
+				"combo_xp": Vector2(X0 + XS, Y + YS * 0.75),
+				"combo_frenzy_power": Vector2(X0 + XS * 2.0, Y - YS * 0.75),
+				"combo_frenzy_window": Vector2(X0 + XS * 2.0, Y),
+				"combo_frenzy_duration": Vector2(X0 + XS * 2.0, Y + YS * 0.75),
+				"combo_cd": Vector2(X0 + XS * 3.1, Y - YS * 0.4),
+				"combo_chain": Vector2(X0 + XS * 3.1, Y + YS * 0.4),
+			}
+		"orders":
+			return {
+				"order_time": Vector2(X0, Y),
+				"order_slots": Vector2(X0 + XS, Y - YS * 0.85),
+				"order_basket": Vector2(X0 + XS * 2.0, Y - YS * 0.85),
+				"xp_mission": Vector2(X0 + XS, Y),
+				"xp_mission_2": Vector2(X0 + XS * 2.0, Y),
+				"order_flow": Vector2(X0 + XS, Y + YS * 0.85),
+				"money_mission": Vector2(X0 + XS * 2.0, Y + YS * 0.55),
+				"money_crit": Vector2(X0 + XS * 3.0, Y + YS * 0.55),
+				"order_express": Vector2(X0 + XS * 3.0, Y - YS * 0.35),
+			}
+		"boutique":
+			return {
+				"money_shop": Vector2(X0, Y - YS * 0.35),
+				"money_sell": Vector2(X0 + XS, Y - YS * 0.95),
+				"boutique_land": Vector2(X0 + XS, Y - YS * 0.15),
+				"boutique_tools": Vector2(X0 + XS, Y + YS * 0.65),
+				"atelier_gears": Vector2(X0 + XS * 2.0, Y),
+				"atelier_long_arms": Vector2(X0 + XS * 3.0, Y - YS * 0.75),
+				"atelier_drone_speed": Vector2(X0 + XS * 4.0, Y - YS * 0.75),
+				"atelier_tour_chain": Vector2(X0 + XS * 3.0, Y + YS * 0.15),
+				"atelier_extra_arms": Vector2(X0 + XS * 4.0, Y + YS * 0.15),
+				"atelier_network_courier": Vector2(X0 + XS * 3.0, Y + YS * 1.0),
+			}
+		_:
+			return {}
+
+
+func _build_skill_branch_map(axis: String) -> Control:
+	## Mindmap horizontale d'une spécialisation.
+	const MAP_W := 720.0
+	const MAP_H := 380.0
+	const NODE_SZ := Vector2(64, 64)
+	const ROOT_SZ := Vector2(72, 72)
 
 	var map := Control.new()
 	map.custom_minimum_size = Vector2(MAP_W, MAP_H)
 	map.size = Vector2(MAP_W, MAP_H)
 	map.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	var origin := Vector2(MAP_W * 0.5, Y_ORIGIN)
-	map.set_meta("hub_pos", origin)
+	map.set_meta("hub_pos", Vector2(70.0, MAP_H * 0.5))
 	map.set_meta("map_size", Vector2(MAP_W, MAP_H))
 
-	var layout: Dictionary = {
-		# —— Clients ——
-		"order_time": Vector2(X_ORDERS, Y_ROOT),
-		"order_flow": Vector2(X_ORDERS - BR * 0.75, Y_L1),
-		"order_slots": Vector2(X_ORDERS + BR * 0.75, Y_L1),
-		# —— Boost ——
-		"combo_flash": Vector2(X_COMBO, Y_ROOT),
-		"combo_frenzy_power": Vector2(X_COMBO - BR * 0.85, Y_L1),
-		"combo_frenzy_window": Vector2(X_COMBO + BR * 0.85, Y_L1),
-		"combo_frenzy_duration": Vector2(X_COMBO - BR * 0.95, Y_L2),
-		"combo_cd": Vector2(X_COMBO + BR * 0.95, Y_L2),
-		"combo_chain": Vector2(X_COMBO, Y_L3),
-		# —— Clics ——
-		"root_hub": Vector2(X_CLICS, Y_ROOT),
-		"farm_yield": Vector2(X_CLICS - BR * 1.05, Y_L1),
-		"click_zone_wide": Vector2(X_CLICS + BR * 1.05, Y_L1),
-		# —— Or (+ boutique sous money_shop) ——
-		"money_mission": Vector2(X_MONEY, Y_ROOT),
-		"money_sell": Vector2(X_MONEY - BR * 0.9, Y_L1),
-		"money_start": Vector2(X_MONEY + BR * 0.9, Y_L1),
-		"money_shop": Vector2(X_MONEY - BR * 0.9, Y_L2),
-		"money_crit": Vector2(X_MONEY + BR * 0.9, Y_L2),
-		"boutique_land": Vector2(X_MONEY - BR * 1.45, Y_L3),
-		"boutique_tools": Vector2(X_MONEY - BR * 0.35, Y_L3),
-		"atelier_gears": Vector2(X_MONEY + BR * 0.95, Y_L3),
-		"atelier_long_arms": Vector2(X_MONEY - BR * 1.45, Y_L4),
-		"atelier_wide_reach": Vector2(X_MONEY - BR * 0.45, Y_L4),
-		"atelier_live_chain": Vector2(X_MONEY + BR * 0.45, Y_L4),
-		"atelier_network": Vector2(X_MONEY + BR * 1.45, Y_L4),
-		"atelier_drone_speed": Vector2(X_MONEY - BR * 1.45, Y_L5),
-		"atelier_extra_arms": Vector2(X_MONEY + BR * 0.45, Y_L5),
-		"atelier_courier": Vector2(X_MONEY + BR * 1.45, Y_L5),
-		# —— Expérience ——
-		"xp_mission": Vector2(X_XP, Y_ROOT),
-		"xp_curve": Vector2(X_XP - BR * 0.8, Y_L1),
-		"xp_mission_2": Vector2(X_XP + BR * 0.8, Y_L1),
-	}
-
+	var layout: Dictionary = _axis_branch_layout(axis)
 	var link_host := Control.new()
 	link_host.name = "Links"
 	link_host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	link_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	link_host.z_index = -1
+	link_host.z_as_relative = true
+	link_host.z_index = 0
 	map.add_child(link_host)
 
-	## Guides fantômes origin → têtes (pas des prérequis).
-	for to_pos in [
-		Vector2(X_ORDERS, Y_ROOT),
-		Vector2(X_COMBO, Y_ROOT),
-		Vector2(X_CLICS, Y_ROOT),
-		Vector2(X_MONEY, Y_ROOT),
-		Vector2(X_XP, Y_ROOT),
-	]:
-		var ghost := Line2D.new()
-		ghost.width = 2.0
-		ghost.default_color = Color(0.55, 0.42, 0.28, 0.18)
-		ghost.antialiased = true
-		ghost.begin_cap_mode = Line2D.LINE_CAP_ROUND
-		ghost.end_cap_mode = Line2D.LINE_CAP_ROUND
-		ghost.points = PackedVector2Array([origin, to_pos])
-		link_host.add_child(ghost)
-
-	## Badges des 5 têtes de rayon.
-	var ray_heads: Array = [
-		{"id": "order_time", "label": "Clients", "color": Color(0.95, 0.55, 0.22)},
-		{"id": "combo_flash", "label": "Boost", "color": Color(0.95, 0.35, 0.25)},
-		{"id": "root_hub", "label": "Clics", "color": Color(0.35, 0.72, 0.42)},
-		{"id": "money_mission", "label": "Or", "color": Color(0.95, 0.78, 0.22)},
-		{"id": "xp_mission", "label": "Expérience", "color": Color(0.45, 0.72, 0.95)},
-	]
-	for head in ray_heads:
-		var hid: String = head["id"]
-		if not layout.has(hid):
-			continue
-		var bc: Color = head["color"]
-		var pill := PanelContainer.new()
-		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pill.z_index = 3
-		var pst := StyleBoxFlat.new()
-		pst.bg_color = Color(1.0, 1.0, 1.0, 0.96)
-		pst.border_color = Color(bc.r, bc.g, bc.b, 0.92)
-		pst.set_border_width_all(2)
-		pst.set_corner_radius_all(10)
-		pst.content_margin_left = 10
-		pst.content_margin_right = 10
-		pst.content_margin_top = 4
-		pst.content_margin_bottom = 4
-		pill.add_theme_stylebox_override("panel", pst)
-		var lbl := Label.new()
-		lbl.text = str(head["label"])
-		lbl.add_theme_font_size_override("font_size", 12)
-		lbl.add_theme_color_override("font_color", Color(bc.r * 0.55 + 0.1, bc.g * 0.55 + 0.08, bc.b * 0.55 + 0.06, 1.0))
-		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		pill.add_child(lbl)
-		map.add_child(pill)
-		pill.reset_size()
-		var bsz := pill.get_combined_minimum_size()
-		pill.position = (layout[hid] as Vector2) + Vector2(-bsz.x * 0.5, -ROOT_SZ.y * 0.5 - bsz.y - 12.0)
-
 	var centers: Dictionary = {}
-	for skill_id in GameState.skill_ids():
+	for skill_id in GameState.skill_ids_for_axis(axis):
 		var sid := str(skill_id)
 		var def: Dictionary = GameState.get_skill_def(sid)
 		if def.is_empty() or not layout.has(sid):
@@ -5987,12 +6401,12 @@ func _build_skill_mindmap() -> Control:
 		var pos: Vector2 = layout[sid]
 		var disc_box: Vector2 = node.get_meta("node_disc", node_size)
 		node.position = pos - disc_box * 0.5
+		node.z_index = 1
 		map.add_child(node)
 		centers[sid] = pos
 		_skill_nodes.append(node)
 
-	## Liens parent → enfant (contour noir + bleu clair si débloqué).
-	for sid in GameState.skill_ids():
+	for sid in GameState.skill_ids_for_axis(axis):
 		var child_id := str(sid)
 		var parents: Array = GameState.skill_prerequisites(child_id)
 		if parents.is_empty():
@@ -6003,37 +6417,46 @@ func _build_skill_mindmap() -> Control:
 				continue
 			var a: Vector2 = centers[pid]
 			var b: Vector2 = centers[child_id]
-			var mid := Vector2(a.x * 0.4 + b.x * 0.6, (a.y + b.y) * 0.5)
+			## Courbe légère entre parent et enfant (lisible en layout horizontal).
+			var mid := Vector2((a.x + b.x) * 0.5, (a.y + b.y) * 0.5)
 			var pts := PackedVector2Array([a, mid, b])
 			var unlocked := GameState.get_skill_level(pid) >= 1
 			var child_lv := GameState.get_skill_level(child_id)
 
 			var outline := Line2D.new()
-			outline.width = 6.2
-			outline.default_color = Color(0.08, 0.06, 0.04, 0.80 if unlocked else 0.35)
+			outline.width = 7.0
+			outline.default_color = Color(0.12, 0.08, 0.04, 0.90 if unlocked else 0.55)
 			outline.antialiased = true
 			outline.begin_cap_mode = Line2D.LINE_CAP_ROUND
 			outline.end_cap_mode = Line2D.LINE_CAP_ROUND
 			outline.joint_mode = Line2D.LINE_JOINT_ROUND
 			outline.points = pts
+			outline.z_index = 0
 			link_host.add_child(outline)
 
 			var line := Line2D.new()
-			line.width = 3.4 if child_lv >= 1 else (2.8 if unlocked else 2.0)
+			line.width = 4.0 if child_lv >= 1 else (3.4 if unlocked else 3.0)
 			if child_lv >= 1:
-				line.default_color = Color(0.42, 0.78, 0.96, 0.98)
+				line.default_color = Color(0.28, 0.72, 0.95, 1.0)
 			elif unlocked:
-				line.default_color = Color(0.52, 0.82, 0.95, 0.72)
+				line.default_color = Color(0.45, 0.78, 0.95, 0.92)
 			else:
-				line.default_color = Color(0.55, 0.48, 0.36, 0.28)
+				## Lien verrouillé bien visible (ambre).
+				line.default_color = Color(0.78, 0.58, 0.22, 0.75)
 			line.antialiased = true
 			line.begin_cap_mode = Line2D.LINE_CAP_ROUND
 			line.end_cap_mode = Line2D.LINE_CAP_ROUND
 			line.joint_mode = Line2D.LINE_JOINT_ROUND
 			line.points = pts
+			line.z_index = 0
 			link_host.add_child(line)
 
 	return map
+
+
+func _build_skill_mindmap() -> Control:
+	## Compat : ouvre Culture si appelé sans axe.
+	return _build_skill_branch_map("trunk" if _skill_open_axis.is_empty() else _skill_open_axis)
 
 
 
@@ -6041,14 +6464,12 @@ func _skill_branch_color(branch: String) -> Color:
 	match branch:
 		"combo":
 			return Color(0.92, 0.48, 0.20, 1.0)
-		"xp":
-			return Color(0.32, 0.58, 0.92, 1.0)
 		"orders":
-			return Color(0.18, 0.68, 0.62, 1.0)
-		"money":
+			return Color(0.95, 0.55, 0.22, 1.0)
+		"money", "boutique", "atelier":
 			return Color(0.86, 0.68, 0.16, 1.0)
-		"boutique", "atelier":
-			return Color(0.58, 0.48, 0.72, 1.0)
+		"trunk":
+			return Color(0.35, 0.72, 0.42, 1.0)
 		_:
 			return Color(0.42, 0.68, 0.38, 1.0)
 
@@ -6078,9 +6499,9 @@ func _mindmap_node(
 	var selected := _skill_selected_id == skill_id
 	var disc := mini(node_size.x, node_size.y)
 	var disc_sz := Vector2(disc, disc)
-	var cost_h := 34.0
+	var cost_h := 30.0
 	## Anneau collé au disque : pad = épaisseur (double vs avant).
-	var ring_w := 10.0 if is_hub else 9.0
+	var ring_w := 9.0 if is_hub else 8.0
 	var ring_pad := ring_w
 
 	var root := Control.new()
@@ -6208,11 +6629,21 @@ func _mindmap_node(
 	badge_st.content_margin_right = 9
 	badge_st.content_margin_top = 4
 	badge_st.content_margin_bottom = 4
-	if can:
-		badge_st.border_color = Color(0.78, 0.56, 0.14, 0.95)
-		badge_st.bg_color = Color(1.0, 0.99, 0.92, 0.98)
-	elif maxed:
+	if maxed:
 		badge_st.border_color = Color(branch_col.r, branch_col.g, branch_col.b, 0.85)
+		badge_st.bg_color = Color(0.96, 0.97, 0.94, 0.96)
+	elif can:
+		## Achetable avec les PC actuels.
+		badge_st.border_color = Color(0.78, 0.56, 0.14, 0.95)
+		badge_st.bg_color = Color(1.0, 0.99, 0.88, 0.98)
+	elif unlocked:
+		## Débloquée mais pas assez de PC → fond grisé.
+		badge_st.bg_color = Color(0.72, 0.72, 0.70, 0.92)
+		badge_st.border_color = Color(0.48, 0.46, 0.42, 0.80)
+	else:
+		## Encore verrouillée (parent / prestige).
+		badge_st.bg_color = Color(0.66, 0.66, 0.64, 0.88)
+		badge_st.border_color = Color(0.42, 0.40, 0.38, 0.70)
 	cost_badge.add_theme_stylebox_override("panel", badge_st)
 	cost_wrap.add_child(cost_badge)
 
@@ -6245,6 +6676,7 @@ func _mindmap_node(
 			pc_ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			pc_ic.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 			pc_ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			pc_ic.modulate = Color.WHITE if can else Color(0.62, 0.62, 0.60, 0.90)
 			cost_row.add_child(pc_ic)
 		var cost_l := Label.new()
 		cost_l.text = str(cost)
@@ -6252,10 +6684,9 @@ func _mindmap_node(
 		cost_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		if can:
 			cost_l.add_theme_color_override("font_color", Color(0.55, 0.36, 0.08))
-		elif unlocked:
-			cost_l.add_theme_color_override("font_color", Color(0.22, 0.18, 0.12))
 		else:
-			cost_l.add_theme_color_override("font_color", Color(0.48, 0.46, 0.42))
+			## Pas assez de PC ou verrouillé.
+			cost_l.add_theme_color_override("font_color", Color(0.42, 0.40, 0.38))
 		cost_row.add_child(cost_l)
 
 	if can:
@@ -6571,8 +7002,11 @@ func _relic_drawer(relic_id: String, def: Dictionary) -> PanelContainer:
 		up_btn.disabled = not can_up
 		up_btn.pressed.connect(func():
 			if GameState.upgrade_relic(relic_id):
+				Sfx.play("coin", 0.03, 1.0, 60)
 				_rebuild_side()
 				_refresh_player_hud()
+			else:
+				Sfx.ui_deny()
 		)
 		box.add_child(up_btn)
 	elif lvl >= GameState.RELIC_MAX_LEVEL:
@@ -6592,7 +7026,10 @@ func _on_field_action(index: int, _from_drag: bool = false) -> void:
 		return
 
 	if p["crop"] == null:
-		GameState.plant_on_plot(index)
+		if GameState.plant_on_plot(index):
+			Sfx.play("plant", 0.06, 0.95, 30)
+		else:
+			Sfx.ui_deny()
 		return
 	if p["ready"]:
 		GameState.harvest_plot(index)
@@ -6601,6 +7038,7 @@ func _on_field_action(index: int, _from_drag: bool = false) -> void:
 	var power := GameState.click_power()
 	var hit: Dictionary = GameState.accelerate_plot_with_splash(index)
 	if bool(hit.get("main", false)):
+		Sfx.play("soil_click", 0.07, 0.9, 28)
 		_play_plot_click_fx(index, power, true)
 		for s in hit.get("splash", []):
 			var si := int(s.get("index", -1))
@@ -6626,6 +7064,7 @@ func _on_fertilizer_pulse(source_index: int) -> void:
 	var targets := GameState.fertilizer_salvo_targets(source_index)
 	if targets.is_empty():
 		return
+	Sfx.play("fertilizer", 0.05, 0.7, 180)
 	var power := GameState.fertilizer_salvo_seconds()
 	_spawn_fertilizer_salvo_ring(src)
 	var any := false
@@ -6647,6 +7086,7 @@ func _on_gardener_harvest(source_index: int, target_index: int, crop_id: StringN
 		return
 	var src: PlotTile = _plot_tiles[source_index]
 	var dst: PlotTile = _plot_tiles[target_index]
+	Sfx.play("machine", 0.06, 0.65, 120)
 	src.play_gardener_action_fx()
 	_spawn_gardener_arm(src, dst, crop_id)
 
@@ -7516,6 +7956,7 @@ func _field_center_global() -> Vector2:
 
 
 func _play_level_up_burst(new_level: int, levels_gained: int = 1) -> void:
+	Sfx.play("level_up", 0.02, 1.0, 120)
 	var center := _field_center_global()
 	var host := Control.new()
 	host.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -7902,11 +8343,16 @@ func _on_xp(current: int, required: int) -> void:
 func _on_prestige() -> void:
 	if not GameState.can_prestige():
 		_show_toast("Atteins le niveau %d pour prestigier." % GameState.prestige_level_required())
+		Sfx.ui_deny()
 		return
+	Sfx.ui_open()
 	var modal := PrestigeConfirmScript.present(self, _textures)
 	modal.confirmed.connect(func():
+		Sfx.ui_confirm()
 		var draft := RelicDraftModalScript.present(self, _textures)
+		Sfx.ui_open()
 		draft.picked.connect(func(relic_id: String):
+			Sfx.play("prestige_ready", 0.02, 1.0, 100)
 			var was_first := not GameState.relics_intro_seen
 			_rebuilding_ui = true
 			GameState.do_prestige_with_relic(relic_id)
@@ -7921,9 +8367,12 @@ func _on_prestige() -> void:
 		)
 		## Annuler au draft = aucun prestige (run intacte).
 		draft.cancelled.connect(func():
+			Sfx.ui_close()
 			_show_toast("Prestige annulé.")
 		)
 	)
+	if modal.has_signal("cancelled"):
+		modal.cancelled.connect(func(): Sfx.ui_close())
 
 
 func _start_relics_intro_tutorial() -> void:

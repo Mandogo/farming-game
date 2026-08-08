@@ -4,7 +4,7 @@
 // Incrementing CACHE_VERSION will kick off the install event and force
 // previously cached resources to be updated from the network.
 /** @type {string} */
-const CACHE_VERSION = '1786022156|0af3f736a1';
+const CACHE_VERSION = '1786174308|28974332840';
 /** @type {string} */
 const CACHE_PREFIX = 'Crops Express Id-sw-cache-';
 const CACHE_NAME = CACHE_PREFIX + CACHE_VERSION;
@@ -21,7 +21,6 @@ const CACHEABLE_FILES = ["crops_express_idle.wasm","crops_express_idle.pck"];
 const FULL_CACHE = CACHED_FILES.concat(CACHEABLE_FILES);
 
 self.addEventListener('install', (event) => {
-	self.skipWaiting();
 	event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(CACHED_FILES)));
 });
 
@@ -100,62 +99,40 @@ self.addEventListener(
 		const referrer = event.request.referrer || '';
 		const base = referrer.slice(0, referrer.lastIndexOf('/') + 1);
 		const local = url.startsWith(base) ? url.replace(base, '') : '';
-		const pathName = (() => {
-			try { return new URL(url).pathname.split('/').pop() || ''; } catch (e) { return local; }
-		})();
-		const isHtmlOrJs = /\.(html|js)$/i.test(pathName) || pathName === '' || pathName === 'index.html';
-		const isHeavyAsset = /\.(wasm|pck)$/i.test(pathName);
-		const isCacheable = FULL_CACHE.some((v) => v === local || v === pathName) || (base === referrer && base.endsWith(CACHED_FILES[0]));
-
-		// Navigations + HTML/JS : network-first (évite HTML neuf + JS/WASM vieux).
-		if (isNavigate || isHtmlOrJs) {
+		const isCacheable = FULL_CACHE.some((v) => v === local) || (base === referrer && base.endsWith(CACHED_FILES[0]));
+		if (isNavigate || isCacheable) {
 			event.respondWith((async () => {
+				// Try to use cache first
 				const cache = await caches.open(CACHE_NAME);
-				try {
-					const response = await fetchAndCache(event, cache, true);
-					return response;
-				} catch (e) {
-					let cached = await cache.match(event.request);
-					if (cached == null && pathName) {
-						cached = await cache.match(pathName);
+				if (isNavigate) {
+					// Check if we have full cache during HTML page request.
+					/** @type {Response[]} */
+					const fullCache = await Promise.all(FULL_CACHE.map((name) => cache.match(name)));
+					const missing = fullCache.some((v) => v === undefined);
+					if (missing) {
+						try {
+							// Try network if some cached file is missing (so we can display offline page in case).
+							const response = await fetchAndCache(event, cache, isCacheable);
+							return response;
+						} catch (e) {
+							// And return the hopefully always cached offline page in case of network failure.
+							console.error('Network error: ', e); // eslint-disable-line no-console
+							return caches.match(OFFLINE_URL);
+						}
 					}
-					if (cached == null) {
-						cached = await cache.match(CACHED_FILES[0]);
-					}
-					if (cached == null) {
-						cached = await caches.match(OFFLINE_URL);
-					}
-					if (cached != null && ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
-						cached = ensureCrossOriginIsolationHeaders(cached);
-					}
-					if (cached != null) {
-						return cached;
-					}
-					throw e;
 				}
-			})());
-			return;
-		}
-
-		if (isCacheable || isHeavyAsset) {
-			event.respondWith((async () => {
-				const cache = await caches.open(CACHE_NAME);
 				let cached = await cache.match(event.request);
 				if (cached != null) {
 					if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
 						cached = ensureCrossOriginIsolationHeaders(cached);
 					}
-					// Mise à jour en arrière-plan pour le prochain chargement.
-					event.waitUntil(fetchAndCache(event, cache, true).catch(() => undefined));
 					return cached;
 				}
-				const response = await fetchAndCache(event, cache, true);
+				// Try network if don't have it in cache.
+				const response = await fetchAndCache(event, cache, isCacheable);
 				return response;
 			})());
-			return;
-		}
-
-		if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
+		} else if (ENSURE_CROSSORIGIN_ISOLATION_HEADERS) {
 			event.respondWith((async () => {
 				let response = await fetch(event.request);
 				response = ensureCrossOriginIsolationHeaders(response);
