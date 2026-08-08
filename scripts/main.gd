@@ -102,6 +102,8 @@ const FIELD_PAN_THRESH := 10.0
 var _hovered_plot: PlotTile = null
 var _tutorial_mode: StringName = &""
 var _last_tutorial_nudge: StringName = &""
+## Anti double-achat shop (tap web : press + echo après rebuild sous le doigt).
+var _shop_click_guard: bool = false
 var _xp_anim_lock: bool = false
 var _hud_player_level: int = 1
 var _pending_card_enter_slots: Dictionary = {}
@@ -5413,9 +5415,8 @@ func _fill_boosts() -> void:
 				Sfx.play("coin", 0.03, 1.0, 60)
 			else:
 				Sfx.ui_deny()
-			_rebuild_side()
-			_update_edit_terrain_button()
-			call_deferred("_center_field"),
+			## Différé : évite qu’un echo de tap retombe sur le nouveau bouton.
+			call_deferred("_after_plot_shop_buy"),
 		"ui_shop_plot",
 		not pl_maxed,
 		"plot",
@@ -5760,8 +5761,22 @@ func _shop_row(
 			buy_row.add_child(coin)
 	if enabled:
 		buy.gui_input.connect(func(ev: InputEvent):
-			if ev is InputEventMouseButton and ev.pressed and ev.button_index == MOUSE_BUTTON_LEFT:
-				on_press.call()
+			if not (ev is InputEventMouseButton):
+				return
+			var mb := ev as InputEventMouseButton
+			if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+				return
+			## Un seul achat par geste : le rebuild du shop recrée le bouton
+			## sous le doigt et un 2ᵉ event rachète (ex. parcelle tuto ×2).
+			if _shop_click_guard:
+				buy.accept_event()
+				return
+			_shop_click_guard = true
+			buy.accept_event()
+			on_press.call()
+			var clear_guard := func():
+				_shop_click_guard = false
+			get_tree().create_timer(0.35).timeout.connect(clear_guard, CONNECT_ONE_SHOT)
 		)
 		buy.mouse_entered.connect(func():
 			var hs := bn.duplicate() as StyleBoxFlat
@@ -5779,6 +5794,12 @@ func _shop_row(
 		panel.set_meta("tut_plot_row", true)
 
 	return panel
+
+
+func _after_plot_shop_buy() -> void:
+	_rebuild_side()
+	_update_edit_terrain_button()
+	_center_field()
 
 
 func _boost_info_meta(boost_id: String) -> Dictionary:
