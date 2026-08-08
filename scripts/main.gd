@@ -600,7 +600,7 @@ func _load_textures() -> void:
 		"shop_speed", "shop_plot", "shop_frenzy", "shop_money", "shop_click",
 		"btn_check", "btn_cancel", "xp", "chrono", "truck",
 		"tab_shop", "tab_prestige", "combo", "target",
-		"skill_tree", "skill_parchment", "click_hand", "click_zone", "sprout", "lock", "settings",
+		"skill_tree", "skill_parchment", "skill_reset", "click_hand", "click_zone", "sprout", "lock", "settings",
 		"fertilizer", "gardener", "gardener_claw", "auto_planter", "auto_harvester", "auto_delivery",
 		"player_avatar", "green_thumb", "edit_pen", "hourglass",
 		"zoom_in", "zoom_out",
@@ -1921,15 +1921,16 @@ func _make_skill_tree_panel_style() -> StyleBoxFlat:
 	return st
 
 
-func _make_ui_close_button(on_press: Callable, light: bool = false) -> Button:
-	## Bouton fermeture compact (croix).
+func _make_ui_close_button(on_press: Callable, light: bool = false, square: bool = false) -> Button:
+	## Bouton fermeture compact (croix). `square` = carré net (arbre de compétences).
 	var btn := Button.new()
 	btn.text = "\u00D7"
 	btn.focus_mode = Control.FOCUS_NONE
 	btn.flat = false
-	btn.custom_minimum_size = Vector2(30, 30)
+	var side := 36 if square else 30
+	btn.custom_minimum_size = Vector2(side, side)
 	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-	btn.add_theme_font_size_override("font_size", 20)
+	btn.add_theme_font_size_override("font_size", 22 if square else 20)
 	## light = marron parchemin (arbre), pas fond sombre.
 	var bg := Color(0.80, 0.68, 0.44, 0.96) if light else Color(0.16, 0.20, 0.18, 0.95)
 	var bd := Color(0.55, 0.40, 0.22, 0.90) if light else Color(0.42, 0.52, 0.46, 0.75)
@@ -1939,25 +1940,89 @@ func _make_ui_close_button(on_press: Callable, light: bool = false) -> Button:
 	btn.add_theme_color_override("font_color", fg)
 	btn.add_theme_color_override("font_hover_color", fg)
 	btn.add_theme_color_override("font_pressed_color", fg.darkened(0.15))
+	var radius := 8 if square else 8
 	for pair in [["normal", bg, bd], ["hover", hv, bd.lightened(0.15)], ["pressed", pr, bd]]:
 		var st := StyleBoxFlat.new()
 		st.bg_color = pair[1]
 		st.border_color = pair[2]
 		st.set_border_width_all(1)
-		st.set_corner_radius_all(8)
+		st.set_corner_radius_all(radius)
 		st.content_margin_left = 0
 		st.content_margin_right = 0
 		st.content_margin_top = 0
-		st.content_margin_bottom = 2
+		st.content_margin_bottom = 0 if square else 2
 		btn.add_theme_stylebox_override(str(pair[0]), st)
 	var dis := StyleBoxFlat.new()
 	dis.bg_color = bg.darkened(0.08)
 	dis.border_color = bd.darkened(0.1)
 	dis.set_border_width_all(1)
-	dis.set_corner_radius_all(8)
+	dis.set_corner_radius_all(radius)
 	btn.add_theme_stylebox_override("disabled", dis)
 	btn.pressed.connect(on_press)
 	return btn
+
+
+func _make_skill_reset_button() -> Button:
+	## Remise à zéro gratuite de l'arbre (rembourse les PC).
+	var btn := Button.new()
+	btn.focus_mode = Control.FOCUS_NONE
+	btn.flat = false
+	btn.custom_minimum_size = Vector2(36, 36)
+	btn.tooltip_text = "Réinitialiser l'arbre (gratuit) — récupère tous tes PC"
+	btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	btn.expand_icon = true
+	btn.add_theme_constant_override("icon_max_width", 22)
+	var has_skills := not GameState.skills_owned.is_empty()
+	btn.disabled = not has_skills
+	if _textures.has("ui_skill_reset"):
+		btn.icon = _textures["ui_skill_reset"]
+		btn.text = ""
+		btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	else:
+		btn.text = "\u21BB" ## ↻
+		btn.add_theme_font_size_override("font_size", 20)
+	var bg := Color(0.80, 0.68, 0.44, 0.96)
+	var bd := Color(0.55, 0.40, 0.22, 0.90)
+	var fg := Color(0.28, 0.18, 0.08, 1.0)
+	btn.add_theme_color_override("font_color", fg)
+	btn.add_theme_color_override("font_hover_color", fg)
+	btn.add_theme_color_override("font_pressed_color", fg.darkened(0.15))
+	btn.add_theme_color_override("font_disabled_color", Color(0.45, 0.38, 0.28, 0.55))
+	for pair in [
+		["normal", bg, bd],
+		["hover", Color(0.88, 0.76, 0.52, 1.0), bd.lightened(0.15)],
+		["pressed", Color(0.70, 0.56, 0.34, 1.0), bd],
+	]:
+		var st := StyleBoxFlat.new()
+		st.bg_color = pair[1]
+		st.border_color = pair[2]
+		st.set_border_width_all(1)
+		st.set_corner_radius_all(8)
+		st.set_content_margin_all(4)
+		btn.add_theme_stylebox_override(str(pair[0]), st)
+	var dis := StyleBoxFlat.new()
+	dis.bg_color = bg.darkened(0.12)
+	dis.border_color = bd.darkened(0.15)
+	dis.set_border_width_all(1)
+	dis.set_corner_radius_all(8)
+	dis.set_content_margin_all(4)
+	btn.add_theme_stylebox_override("disabled", dis)
+	if not has_skills:
+		btn.modulate = Color(1, 1, 1, 0.55)
+	btn.pressed.connect(_on_skill_reset_pressed)
+	return btn
+
+
+func _on_skill_reset_pressed() -> void:
+	var refund := GameState.reset_all_skills()
+	if refund < 0:
+		return
+	Sfx.ui_click()
+	_skill_selected_id = ""
+	_skill_anchor_id = ""
+	_skill_focus_pending_id = ""
+	_rebuild_skill_modal()
+	_refresh_player_hud()
 
 
 func _make_skill_pc_badge() -> PanelContainer:
@@ -5530,6 +5595,9 @@ func _fill_skills() -> void:
 	header.add_theme_constant_override("separation", 8)
 	host.add_child(header)
 
+	## Gauche : PC disponibles.
+	header.add_child(_make_skill_pc_badge())
+
 	var title_box := VBoxContainer.new()
 	title_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	title_box.add_theme_constant_override("separation", 1)
@@ -5545,8 +5613,13 @@ func _fill_skills() -> void:
 	hint.add_theme_color_override("font_color", Color(0.48, 0.38, 0.26))
 	title_box.add_child(hint)
 
-	header.add_child(_make_skill_pc_badge())
-	header.add_child(_make_ui_close_button(_close_skill_tree, true))
+	## Droite : reset (carré) puis fermer (carré).
+	var right_btns := HBoxContainer.new()
+	right_btns.add_theme_constant_override("separation", 6)
+	right_btns.alignment = BoxContainer.ALIGNMENT_END
+	header.add_child(right_btns)
+	right_btns.add_child(_make_skill_reset_button())
+	right_btns.add_child(_make_ui_close_button(_close_skill_tree, true, true))
 
 	var body := HBoxContainer.new()
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL

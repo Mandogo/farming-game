@@ -2662,6 +2662,64 @@ func buy_skill(skill_id: String) -> bool:
 	return true
 
 
+func skill_points_invested_total() -> int:
+	## Somme réelle des coûts investis (plus fiable que skill_points_spent).
+	var total := 0
+	for sid in skills_owned.keys():
+		var lv := get_skill_level(str(sid))
+		for i in lv:
+			var c := skill_cost_for_level(str(sid), i)
+			if c < 9000:
+				total += c
+	return total
+
+
+func reset_all_skills() -> int:
+	## Remise à zéro gratuite et illimitée de l'arbre — rembourse tous les PC.
+	var refund := skill_points_invested_total()
+	if refund <= 0 and skills_owned.is_empty():
+		toast.emit("Aucune compétence à réinitialiser.")
+		return 0
+	skills_owned.clear()
+	skill_points += refund
+	skill_points_spent = 0
+	invalidate_fertilizer_cover()
+	_trim_orders_to_skill_cap()
+	_refill_orders()
+	level_changed.emit(player_level, skill_points)
+	skills_changed.emit()
+	boosts_changed.emit()
+	missions_changed.emit()
+	prestige_ready_changed.emit(can_prestige())
+	save_game()
+	if refund > 0:
+		toast.emit("Arbre réinitialisé — %d PC récupérés." % refund)
+	else:
+		toast.emit("Arbre réinitialisé.")
+	return refund
+
+
+func _trim_orders_to_skill_cap() -> void:
+	## Après reset Carnet : retire les commandes / refresh hors slots débloqués.
+	var cap := maxi(1, max_active_missions())
+	var kept: Array[MissionData] = []
+	for m in missions:
+		if m.board_slot < 0 or m.board_slot < cap:
+			kept.append(m)
+	missions = kept
+	var kept_refresh: Array = []
+	for s in order_refresh_slots:
+		var bs := int(s.get("board_slot", -1))
+		if bs < 0 or bs < cap:
+			kept_refresh.append(s)
+	order_refresh_slots = kept_refresh
+	## Si encore trop d'actives (slots non assignés), garde les premières.
+	while missions.size() > cap:
+		missions.pop_back()
+	while order_refresh_slots.size() + missions.size() > cap and not order_refresh_slots.is_empty():
+		order_refresh_slots.pop_back()
+
+
 func _apply_skill_level_up(skill_id: String, new_level: int) -> void:
 	var title := str(get_skill_def(skill_id).get("title", skill_id))
 	toast.emit("%s — niveau %d" % [title, new_level])
