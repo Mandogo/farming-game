@@ -190,13 +190,13 @@ func _rebuild() -> void:
 
 	_stock_label.text = "Stock : x%d  ·  %d or / unité" % [stock, _unit()]
 
-	## Stepper −− / − / qty (saisissable) / + / ++
+	## Stepper -- / - / qty (saisissable) / + / ++
 	var stepper := HBoxContainer.new()
 	stepper.add_theme_constant_override("separation", 6)
 	stepper.alignment = BoxContainer.ALIGNMENT_CENTER
 	_body.add_child(stepper)
 	stepper.add_child(_step_btn("--", -10))
-	stepper.add_child(_step_btn("−", -1))
+	stepper.add_child(_step_btn("-", -1))
 
 	_qty_edit = LineEdit.new()
 	_qty_edit.custom_minimum_size = Vector2(72, 32)
