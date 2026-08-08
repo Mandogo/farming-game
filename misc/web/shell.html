@@ -40,6 +40,8 @@ html, body {
 	width: 100%;
 	height: 100%;
 	outline: none;
+	/* Pas de pixelated : rendu farm 2D soft (le buffer DPR garde la netteté). */
+	image-rendering: auto;
 }
 
 #canvas:focus {
@@ -295,6 +297,9 @@ html, body {
 	overflow: hidden;
 	background: #1a1f1c;
 	transform-origin: top left;
+	/* Couche GPU propre : limite le flou du rotate(90deg) en portrait. */
+	-webkit-backface-visibility: hidden;
+	backface-visibility: hidden;
 }
 
 #cei-game {
@@ -630,13 +635,24 @@ window.ceiSafeInsets = function () {
 		};
 	}
 
-	/** Canvas buffer = cadre paysage (évite le stretch window-portrait → CSS-paysage). */
+	/**
+	 * Canvas buffer = cadre paysage × DPR (évite le stretch window-portrait → CSS-paysage).
+	 * Sans DPR, Godot rend en pixels CSS puis le navigateur upscale → flou / hyperpixelisé
+	 * sur téléphone (retina 2×–3×). Même logique que le resize Adaptive de Godot.
+	 */
 	function sizeGameCanvas(canvas, w, h) {
 		if (!canvas) return;
-		canvas.style.width = w + 'px';
-		canvas.style.height = h + 'px';
-		if (canvas.width !== w) canvas.width = w;
-		if (canvas.height !== h) canvas.height = h;
+		const cssW = Math.max(1, Math.round(w));
+		const cssH = Math.max(1, Math.round(h));
+		const dpr = Math.max(1, Math.min(Number(window.devicePixelRatio) || 1, 3));
+		const bufW = Math.max(1, Math.round(cssW * dpr));
+		const bufH = Math.max(1, Math.round(cssH * dpr));
+		const csw = cssW + 'px';
+		const csh = cssH + 'px';
+		if (canvas.style.width !== csw) canvas.style.width = csw;
+		if (canvas.style.height !== csh) canvas.style.height = csh;
+		if (canvas.width !== bufW) canvas.width = bufW;
+		if (canvas.height !== bufH) canvas.height = bufH;
 	}
 
 	/** Jeu toujours horizontal. Si le téléphone est vertical : on tourne l'affichage, pas les mesures. */
